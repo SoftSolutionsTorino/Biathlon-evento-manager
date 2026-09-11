@@ -1,22 +1,14 @@
-/**
- * i18n — Area Riservata Tour Operator (Antholz/Anterselva)
- * ---------------------------------------------------------
- * Gestione delle tre lingue previste dalle specifiche: italiano, tedesco, inglese.
- * La lingua scelta viene salvata in localStorage e riapplicata al caricamento.
- * Per evitare mismatch SSR/client, il primo render usa sempre la lingua di
- * default (it) e la preferenza salvata viene applicata dopo l'idratazione.
- */
 import * as React from "react";
+import { api } from "@/lib/api";
 
 export type Lang = "it" | "de" | "en";
+export type Dict = Record<string, string>;
 
 export const LANGS: { code: Lang; label: string; flag: string }[] = [
   { code: "it", label: "Italiano", flag: "🇮🇹" },
   { code: "de", label: "Deutsch", flag: "🇩🇪" },
   { code: "en", label: "English", flag: "🇬🇧" },
 ];
-
-type Dict = Record<string, string>;
 
 const it: Dict = {
   // --- generali ---
@@ -65,6 +57,7 @@ const it: Dict = {
   "nav.section.main": "Area operativa",
   "nav.section.toData": "Dati Tour Operator",
   "common.send": "Invia",
+  "common.nomeutente": "Nome utente",
 
   // --- ruoli ---
   "role.admin": "Amministratore",
@@ -101,7 +94,7 @@ const it: Dict = {
   "login.or": "effettua il login con credenziali",
   "login.submit": "Accedi",
   "login.asAdmin": "Accedi come amministratore",
-  "login.note": "Demo mockup — l'autenticazione reale userà JWT exchange con il sito ASP.NET.",
+  "login.note": "Se hai smarrito le credenziali, contatta l'amministratore di sistema.",
   "login.success": "SSO autenticato — JWT ricevuto dal gestionale",
 
   // --- dashboard ---
@@ -266,7 +259,6 @@ const it: Dict = {
   "admin.summary.value": "Valore",
   "admin.summary.exported": "Esportazione generata",
 };
-
 const de: Dict = {
   "app.title": "Tour-Operator-Bereich",
   "app.subtitle": "Biathlon-Weltcup · Antholz 2027",
@@ -313,6 +305,7 @@ const de: Dict = {
   "nav.section.main": "Operativer Bereich",
   "nav.section.toData": "Tour-Operator-Daten",
   "common.send": "Senden",
+  "common.nomeutente": "Benutzername",
 
   "role.admin": "Administrator",
   "role.to": "Tour-Operator-Benutzer",
@@ -346,7 +339,7 @@ const de: Dict = {
   "login.submit": "Anmelden",
   "login.asAdmin": "Als Administrator anmelden",
   "login.note":
-    "Demo-Mockup — die echte Anmeldung erfolgt per JWT-Austausch mit der ASP.NET-Website.",
+    "Falls Sie Ihre Zugangsdaten verloren haben, wenden Sie sich bitte an den Systemadministrator.",
   "login.success": "SSO authentifiziert — JWT vom Ticketsystem erhalten",
 
   "dash.title": "Dashboard",
@@ -503,7 +496,6 @@ const de: Dict = {
   "admin.summary.value": "Wert",
   "admin.summary.exported": "Export erstellt",
 };
-
 const en: Dict = {
   "app.title": "Tour Operator Area",
   "app.subtitle": "Biathlon World Cup · Antholz 2027",
@@ -550,6 +542,7 @@ const en: Dict = {
   "nav.section.main": "Operations",
   "nav.section.toData": "Tour Operator data",
   "common.send": "Send",
+  "common.nomeutente": "Username",
 
   "role.admin": "Administrator",
   "role.to": "Tour Operator user",
@@ -582,7 +575,7 @@ const en: Dict = {
   "login.or": "login with provided credentials",
   "login.submit": "Sign in",
   "login.asAdmin": "Sign in as administrator",
-  "login.note": "Demo mockup — real authentication will use JWT exchange with the ASP.NET site.",
+  "login.note": "If you've lost the credentials please contact the system administrator",
   "login.success": "SSO authenticated — JWT received from the ticketing system",
 
   "dash.title": "Dashboard",
@@ -736,25 +729,104 @@ const en: Dict = {
   "admin.summary.exported": "Export generated",
 };
 
-const DICTS: Record<Lang, Dict> = { it, de, en };
+const FALLBACK_DICTS: Record<Lang, Dict> = { it, de, en };
+
+// ----- Cache configuration -----
+const CACHE_KEY_PREFIX = "areato.translations.";
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 1 day (in milliseconds)
+
+// ----- Helper functions for localStorage caching -----
+function getCachedTranslations(lang: Lang): Dict | null {
+  try {
+    const key = CACHE_KEY_PREFIX + lang;
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    // Check if cache is still valid (not expired)
+    if (data.timestamp && Date.now() - data.timestamp < CACHE_TTL) {
+      return data.dict;
+    }
+    // Cache expired → remove it
+    window.localStorage.removeItem(key);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedTranslations(lang: Lang, dict: Dict) {
+  try {
+    const key = CACHE_KEY_PREFIX + lang;
+    window.localStorage.setItem(key, JSON.stringify({ dict, timestamp: Date.now() }));
+  } catch {
+    /* storage not available or quota exceeded */
+  }
+}
+
+// ----- In-memory cache (per session) -----
+const translationCache = new Map<Lang, Dict>();
 
 type I18nCtx = {
   lang: Lang;
   setLang: (l: Lang) => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
+  loading: boolean;
 };
 
 const Ctx = React.createContext<I18nCtx | null>(null);
 const STORAGE_KEY = "areato.lang";
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-  // default "it" al primo render → nessun mismatch SSR/client
   const [lang, setLangState] = React.useState<Lang>("it");
+  const [dict, setDict] = React.useState<Dict | null>(null);
+  const [loading, setLoading] = React.useState(true);
 
+  // Load saved language from localStorage on mount
   React.useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY) as Lang | null;
-    if (saved && saved in DICTS) setLangState(saved);
+    if (saved && saved in FALLBACK_DICTS) {
+      setLangState(saved);
+    }
   }, []);
+
+  // Fetch translations when language changes
+  React.useEffect(() => {
+    const loadTranslations = async () => {
+      setLoading(true);
+      try {
+        // 1. Check in-memory cache first
+        if (translationCache.has(lang)) {
+          setDict(translationCache.get(lang)!);
+          setLoading(false);
+          return;
+        }
+
+        // 2. Check localStorage cache
+        const cached = getCachedTranslations(lang);
+        if (cached) {
+          translationCache.set(lang, cached);
+          setDict(cached);
+          setLoading(false);
+          return;
+        }
+
+        // 3. Fetch from API
+        const data = await api.getTraduzioni(lang);
+        translationCache.set(lang, data.traduzioni);
+        setCachedTranslations(lang, data.traduzioni);
+        setDict(data.traduzioni);
+      } catch (err) {
+        console.error("Failed to load translations, using fallback", err);
+        // Fallback to static dictionary
+        const fallback = FALLBACK_DICTS[lang] ?? FALLBACK_DICTS.it;
+        setDict(fallback);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadTranslations();
+  }, [lang]);
 
   const setLang = React.useCallback((l: Lang) => {
     setLangState(l);
@@ -762,20 +834,21 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       window.localStorage.setItem(STORAGE_KEY, l);
       document.documentElement.lang = l;
     } catch {
-      /* storage non disponibile */
+      /* storage not available */
     }
   }, []);
 
+  // Translation function (prefers loaded dict, then fallback, then key)
   const t = React.useCallback(
     (key: string, vars?: Record<string, string | number>) => {
-      const raw = DICTS[lang][key] ?? DICTS.it[key] ?? key;
+      let raw = dict?.[key] ?? FALLBACK_DICTS[lang]?.[key] ?? key;
       if (!vars) return raw;
       return raw.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k] ?? `{${k}}`));
     },
-    [lang],
+    [lang, dict],
   );
 
-  return <Ctx.Provider value={{ lang, setLang, t }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ lang, setLang, t, loading }}>{children}</Ctx.Provider>;
 }
 
 export function useI18n() {
@@ -784,14 +857,13 @@ export function useI18n() {
   return ctx;
 }
 
-/** Mesi abbreviati per la formattazione deterministica delle date nelle tre lingue. */
+// ----- Formatters (unchanged) -----
 export const MONTHS: Record<Lang, string[]> = {
   it: ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"],
   de: ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
   en: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
 };
 
-/** Formattazione data/ora deterministica (UTC) nella lingua corrente. */
 export function useFormatters() {
   const { lang } = useI18n();
   const p = (n: number) => n.toString().padStart(2, "0");

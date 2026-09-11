@@ -1,19 +1,15 @@
-/**
- * Prenotazioni del Tour Operator (o del TO selezionato dall'Admin, in lettura).
- *
- * Regole di ruolo (specifiche cliente):
- * - registrazione pagamento ed emissione titoli: solo Admin (pagina Pagamenti);
- * - annullamento: consentito al TO solo se non risultano pagamenti,
- *   altrimenti deve intervenire l'Admin;
- * - PDF: "Prenotazione — Richiesta" finché è in attesa di pagamento,
- *   "Prenotazione — Conferma" (Bestellformular) dopo la conferma.
- *
- * Responsive: tabella su >= md, elenco a schede su mobile.
- */
+
 import * as React from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { FileDown } from "lucide-react";
-import { useToStore, fmtEur, daysUntil, type BookingStatus, type Booking } from "@/lib/toStore";
+import {
+  useToStore,
+  fmtEur,
+  daysUntil,
+  type BookingStatus,
+  type Booking,
+  Role,
+} from "@/lib/toStore";
 import { useI18n, useFormatters } from "@/lib/i18n";
 import { can } from "@/lib/permissions";
 import { generatePdf } from "@/lib/pdf";
@@ -23,12 +19,27 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { Ruolo } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/bookings")({
   component: BookingsPage,
@@ -43,13 +54,15 @@ const VARIANT: Record<BookingStatus, "default" | "secondary" | "destructive" | "
 };
 
 function BookingsPage() {
-  const { bookings, races, sectors, cancelBooking, role, tourOperators, currentToId } = useToStore();
+  const { bookings, races, sectors, cancelBooking, user, tourOperators, currentToId } =
+    useToStore();
   const { t, lang } = useI18n();
   const { fmtDate, fmtDateOnly } = useFormatters();
   const [filter, setFilter] = React.useState<"all" | BookingStatus>("all");
   const filtered = bookings.filter((b) => filter === "all" || b.status === filter);
   const operatorName = tourOperators.find((x) => x.id === currentToId)?.name ?? "";
 
+  const role = user?.ruolo.toLowerCase() as Role;
   /** PDF di richiesta o conferma d'ordine (Bestellformular). */
   const downloadPdf = (b: Booking) => {
     const r = races.find((x) => x.id === b.raceId)!;
@@ -119,7 +132,9 @@ function BookingsPage() {
           </AlertDialog>
         )}
         {!closed && !canCancel && role === "to" && b.paid > 0 && (
-          <span className="self-center text-xs text-muted-foreground">{t("bookings.adminOnly")}</span>
+          <span className="self-center text-xs text-muted-foreground">
+            {t("bookings.adminOnly")}
+          </span>
         )}
       </div>
     );
@@ -140,7 +155,9 @@ function BookingsPage() {
             <TabsTrigger value="all">
               {t("common.all")} ({bookings.length})
             </TabsTrigger>
-            <TabsTrigger value="pending_payment">{t("bookings.status.pending_payment")}</TabsTrigger>
+            <TabsTrigger value="pending_payment">
+              {t("bookings.status.pending_payment")}
+            </TabsTrigger>
             <TabsTrigger value="partially_paid">{t("bookings.status.partially_paid")}</TabsTrigger>
             <TabsTrigger value="paid">{t("bookings.status.paid")}</TabsTrigger>
             <TabsTrigger value="issued">{t("bookings.status.issued")}</TabsTrigger>
@@ -167,8 +184,8 @@ function BookingsPage() {
                   <Badge variant={VARIANT[b.status]}>{t(`bookings.status.${b.status}`)}</Badge>
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {t("common.seats")}: <span className="font-medium text-foreground">{b.qty}</span> ·{" "}
-                  {fmtEur(b.paid)} / {fmtEur(b.total)}
+                  {t("common.seats")}: <span className="font-medium text-foreground">{b.qty}</span>{" "}
+                  · {fmtEur(b.paid)} / {fmtEur(b.total)}
                 </div>
                 <Progress value={pct} className="h-1.5" />
                 <div className="text-xs text-muted-foreground">
@@ -181,7 +198,9 @@ function BookingsPage() {
         })}
         {filtered.length === 0 && (
           <Card>
-            <CardContent className="py-8 text-center text-sm text-muted-foreground">{t("bookings.empty")}</CardContent>
+            <CardContent className="py-8 text-center text-sm text-muted-foreground">
+              {t("bookings.empty")}
+            </CardContent>
           </Card>
         )}
       </div>
@@ -225,7 +244,9 @@ function BookingsPage() {
                     <TableCell>
                       <div className="text-xs">{fmtDate(b.paymentDueAt)}</div>
                       {!closed && b.status !== "paid" && (
-                        <div className={`text-xs ${d <= 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                        <div
+                          className={`text-xs ${d <= 0 ? "text-destructive" : "text-muted-foreground"}`}
+                        >
                           {d <= 0 ? t("dash.expiring.today") : `${d} ${t("common.days")}`}
                         </div>
                       )}

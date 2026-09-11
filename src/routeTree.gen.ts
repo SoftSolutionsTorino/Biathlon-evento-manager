@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppAuditRouteImport } from './routes/_app.audit'
 import { Route as AppBookingsRouteImport } from './routes/_app.bookings'
+import { Route as AppCartRouteImport } from './routes/_app.cart'
 import { Route as AppOptionsRouteImport } from './routes/_app.options'
 import { Route as AppRacesRouteImport } from './routes/_app.races'
 import { Route as AppSalesRouteImport } from './routes/_app.sales'
@@ -44,6 +45,11 @@ const AppAuditRoute = AppAuditRouteImport.update({
 const AppBookingsRoute = AppBookingsRouteImport.update({
   id: '/bookings',
   path: '/bookings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCartRoute = AppCartRouteImport.update({
+  id: '/cart',
+  path: '/cart',
   getParentRoute: () => AppRoute,
 } as any)
 const AppOptionsRoute = AppOptionsRouteImport.update({
@@ -87,6 +93,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/audit': typeof AppAuditRoute
   '/bookings': typeof AppBookingsRoute
+  '/cart': typeof AppCartRoute
   '/options': typeof AppOptionsRoute
   '/races': typeof AppRacesRoute
   '/sales': typeof AppSalesRoute
@@ -99,6 +106,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/audit': typeof AppAuditRoute
   '/bookings': typeof AppBookingsRoute
+  '/cart': typeof AppCartRoute
   '/options': typeof AppOptionsRoute
   '/races': typeof AppRacesRoute
   '/sales': typeof AppSalesRoute
@@ -114,6 +122,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_app/audit': typeof AppAuditRoute
   '/_app/bookings': typeof AppBookingsRoute
+  '/_app/cart': typeof AppCartRoute
   '/_app/options': typeof AppOptionsRoute
   '/_app/races': typeof AppRacesRoute
   '/_app/sales': typeof AppSalesRoute
@@ -130,6 +139,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/audit'
     | '/bookings'
+    | '/cart'
     | '/options'
     | '/races'
     | '/sales'
@@ -142,6 +152,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/audit'
     | '/bookings'
+    | '/cart'
     | '/options'
     | '/races'
     | '/sales'
@@ -156,6 +167,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/_app/audit'
     | '/_app/bookings'
+    | '/_app/cart'
     | '/_app/options'
     | '/_app/races'
     | '/_app/sales'
@@ -206,6 +218,13 @@ declare module '@tanstack/react-router' {
       path: '/bookings'
       fullPath: '/bookings'
       preLoaderRoute: typeof AppBookingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/cart': {
+      id: '/_app/cart'
+      path: '/cart'
+      fullPath: '/cart'
+      preLoaderRoute: typeof AppCartRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/options': {
@@ -263,6 +282,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppAuditRoute: typeof AppAuditRoute
   AppBookingsRoute: typeof AppBookingsRoute
+  AppCartRoute: typeof AppCartRoute
   AppOptionsRoute: typeof AppOptionsRoute
   AppRacesRoute: typeof AppRacesRoute
   AppSalesRoute: typeof AppSalesRoute
@@ -276,6 +296,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppAuditRoute: AppAuditRoute,
   AppBookingsRoute: AppBookingsRoute,
+  AppCartRoute: AppCartRoute,
   AppOptionsRoute: AppOptionsRoute,
   AppRacesRoute: AppRacesRoute,
   AppSalesRoute: AppSalesRoute,

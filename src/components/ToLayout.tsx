@@ -1,16 +1,4 @@
-/**
- * Layout applicativo dell'Area Riservata.
- *
- * Responsive:
- * - < md  : sidebar sostituita da un drawer (Sheet) apribile dall'icona menu,
- *           topbar su due righe con controlli a capo automatico.
- * - >= md : sidebar fissa a 16rem e topbar su riga singola.
- *
- * Ruoli:
- * - Admin → sezione "Amministrazione" (anagrafiche, validazioni, pagamenti,
- *   riepilogo) più la consultazione in sola lettura dei dati del TO selezionato.
- * - Tour Operator → solo l'area operativa con i propri dati.
- */
+
 import * as React from "react";
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import {
@@ -31,12 +19,19 @@ import {
   Globe,
   ShieldCheck,
   Menu,
+  ShoppingCart,
 } from "lucide-react";
 import { ToStoreProvider, useToStore, daysUntil } from "@/lib/toStore";
 import { I18nProvider, useI18n, LANGS } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import {
   DropdownMenu,
@@ -50,10 +45,16 @@ import {
 type NavItem = { to: string; labelKey: string; icon: typeof LayoutDashboard; exact?: boolean };
 
 /** Voci comuni (dashboard) + area operativa del Tour Operator. */
-const DASHBOARD: NavItem = { to: "/", labelKey: "nav.dashboard", icon: LayoutDashboard, exact: true };
+const DASHBOARD: NavItem = {
+  to: "/",
+  labelKey: "nav.dashboard",
+  icon: LayoutDashboard,
+  exact: true,
+};
 
 const OPERATIVE_NAV: NavItem[] = [
   { to: "/races", labelKey: "nav.races", icon: CalendarDays },
+  { to: "/cart", labelKey: "nav.cart", icon: ShoppingCart },
   { to: "/options", labelKey: "nav.options", icon: Clock },
   { to: "/bookings", labelKey: "nav.bookings", icon: ClipboardList },
   { to: "/sales", labelKey: "nav.sales", icon: Ticket },
@@ -90,6 +91,25 @@ function LanguageSwitcher() {
   );
 }
 
+/** Scorciatoia al carrello multi-gara con il numero di righe in attesa di invio. */
+function CartButton() {
+  const { cart } = useToStore();
+  const { t } = useI18n();
+  const n = cart.length;
+  return (
+    <Button asChild variant="outline" size="icon" className="relative" aria-label={t("nav.cart")}>
+      <Link to="/cart">
+        <ShoppingCart className="h-4 w-4" />
+        {n > 0 && (
+          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+            {n}
+          </span>
+        )}
+      </Link>
+    </Button>
+  );
+}
+
 function NotificationsBell() {
   const { options, bookings, allOptions, isAdmin } = useToStore();
   const { t } = useI18n();
@@ -116,7 +136,9 @@ function NotificationsBell() {
         <DropdownMenuLabel>{t("notif.title")}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {total === 0 && (
-          <div className="px-2 py-4 text-center text-sm text-muted-foreground">{t("notif.empty")}</div>
+          <div className="px-2 py-4 text-center text-sm text-muted-foreground">
+            {t("notif.empty")}
+          </div>
         )}
         {pending.length > 0 && (
           <DropdownMenuItem className="flex flex-col items-start gap-0.5">
@@ -130,7 +152,10 @@ function NotificationsBell() {
           <DropdownMenuItem key={o.id} className="flex flex-col items-start gap-0.5">
             <span className="text-sm font-medium">{t("notif.optionExpiring")}</span>
             <span className="text-xs text-muted-foreground">
-              {t("notif.optionExpiring.detail", { qty: o.qty, days: Math.max(0, daysUntil(o.expiresAt)) })}
+              {t("notif.optionExpiring.detail", {
+                qty: o.qty,
+                days: Math.max(0, daysUntil(o.expiresAt)),
+              })}
             </span>
           </DropdownMenuItem>
         ))}
@@ -138,7 +163,10 @@ function NotificationsBell() {
           <DropdownMenuItem key={b.id} className="flex flex-col items-start gap-0.5">
             <span className="text-sm font-medium">{t("notif.paymentDue")}</span>
             <span className="text-xs text-muted-foreground">
-              {t("notif.paymentDue.detail", { customer: b.customer, days: Math.max(0, daysUntil(b.paymentDueAt)) })}
+              {t("notif.paymentDue.detail", {
+                customer: b.customer,
+                days: Math.max(0, daysUntil(b.paymentDueAt)),
+              })}
             </span>
           </DropdownMenuItem>
         ))}
@@ -189,8 +217,8 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
           {ADMIN_NAV.map(renderItem)}
           {renderItem(AUDIT_NAV)}
           {/* L'Admin consulta i dati del TO selezionato in sola lettura. */}
-          {sectionTitle(t("nav.section.toData"))}
-          {OPERATIVE_NAV.map(renderItem)}
+          {/* {sectionTitle(t("nav.section.toData"))}
+          {OPERATIVE_NAV.map(renderItem)} */}
         </>
       ) : (
         <>
@@ -248,7 +276,10 @@ function MobileNav() {
           <Menu className="h-4 w-4" />
         </Button>
       </SheetTrigger>
-      <SheetContent side="left" className="flex w-[17rem] flex-col bg-sidebar p-0 text-sidebar-foreground">
+      <SheetContent
+        side="left"
+        className="flex w-[17rem] flex-col bg-sidebar p-0 text-sidebar-foreground"
+      >
         <SheetTitle className="sr-only">{t("common.menu")}</SheetTitle>
         <BrandHeader />
         <NavContent onNavigate={() => setOpen(false)} />
@@ -259,22 +290,34 @@ function MobileNav() {
 }
 
 function Topbar() {
-  const { tourOperators, currentToId, setCurrentTo, isAdmin, role, setRole, currentUserEmail } = useToStore();
+  // vedere cose tour operator per lui
+  const {
+    tourOperators,
+    currentToId,
+    isAdmin,
+    currentUserEmail,
+    selectedToId,
+    setSelectedTo,
+    user,
+  } = useToStore();
   const { t } = useI18n();
-  const to = tourOperators.find((x) => x.id === currentToId)!;
+  const to = tourOperators.find((x) => x.id === currentToId);
   const navigate = useNavigate();
   const initials = currentUserEmail.slice(0, 2).toUpperCase();
 
+ 
   return (
     <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-4 py-3 sm:px-6 md:h-16 md:flex-nowrap md:py-0">
-      <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto sm:flex-1">
+      <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto sm:flex-1 ">
         <MobileNav />
         {isAdmin ? (
           <div className="flex min-w-0 flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{t("admin.operators.impersonate")}</span>
-            <Select value={currentToId} onValueChange={setCurrentTo}>
+            <span className="text-xs text-muted-foreground">
+              {t("admin.operators.impersonate")}
+            </span>
+            <Select value={selectedToId ?? ""} onValueChange={(val) => setSelectedTo(val)}>
               <SelectTrigger className="h-8 w-full min-w-0 sm:w-[260px]">
-                <SelectValue />
+                <SelectValue placeholder={t("admin.operators.selectPlaceholder")} />
               </SelectTrigger>
               <SelectContent>
                 {tourOperators.map((op) => (
@@ -288,43 +331,53 @@ function Topbar() {
         ) : (
           <div className="flex min-w-0 flex-col">
             <span className="text-xs text-muted-foreground sm:text-sm">{t("common.operator")}</span>
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate font-semibold">{to.name}</span>
-              <Badge variant={to.type === "FanClub" ? "secondary" : "outline"}>{to.type}</Badge>
+            <div className="flex min-w-0 items-center gap-2 ">
+              <span className="truncate font-semibold">{user?.nomeCompleto}</span>
+              <Badge className="" variant={user?.ruolo === "ADMIN" ? "secondary" : "outline"}>
+                {user?.ruolo === "ADMIN" ? t("role.admin") : t("role.to")}
+              </Badge>
             </div>
           </div>
         )}
         {isAdmin && (
-          <Badge className="hidden gap-1 sm:flex">
+          <Badge className="hidden gap-1 sm:flex mt-4">
             <ShieldCheck className="h-3 w-3" /> {t("role.adminBadge")}
           </Badge>
         )}
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {/* Selettore di ruolo: nel mockup consente di mostrare al cliente entrambe le interfacce */}
-        <Select value={role} onValueChange={(v) => setRole(v as "admin" | "to")}>
-          <SelectTrigger className="h-9 w-[150px] sm:w-[190px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="to">{t("role.to")}</SelectItem>
-            <SelectItem value="admin">{t("role.admin")}</SelectItem>
-          </SelectContent>
-        </Select>
+        <CartButton />
+        {/* {import.meta.env.DEV && (
+          <Select value={isAdmin ? "admin" : "to"} onValueChange={(v) => {}}>
+            <SelectTrigger className="h-9 w-[150px] sm:w-[190px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="to">{t("role.to")}</SelectItem>
+              <SelectItem value="admin">{t("role.admin")}</SelectItem>
+            </SelectContent>
+          </Select>
+        )} */}
+
         <LanguageSwitcher />
         <NotificationsBell />
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
                 {initials}
               </div>
-              <span className="hidden max-w-[10rem] truncate lg:inline">{isAdmin ? t("role.admin") : to.name}</span>
+              <span className="hidden max-w-[10rem] truncate lg:inline">
+                {isAdmin ? t("role.admin") : (user?.nomeCompleto ?? "—")}
+              </span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuLabel className="max-w-[16rem] truncate">{currentUserEmail}</DropdownMenuLabel>
+            <DropdownMenuLabel className="max-w-[16rem] truncate">
+              {user?.email ?? user?.nomeCompleto ?? "—"}
+            </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => navigate({ to: "/login" })}>
               <LogOut className="mr-2 h-4 w-4" /> {t("common.logout")}
@@ -335,7 +388,6 @@ function Topbar() {
     </header>
   );
 }
-
 export function ToLayout() {
   return (
     <I18nProvider>

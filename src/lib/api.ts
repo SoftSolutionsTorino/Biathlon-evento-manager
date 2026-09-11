@@ -1,18 +1,7 @@
-/**
- * Client REST verso le API ASP.NET Core dell'Area Riservata Tour Operator.
- *
- * Base URL configurabile con VITE_API_BASE_URL (es. https://to.biathlon-antholz.it/api).
- * Il token JWT viene conservato in localStorage e inviato come Bearer token.
- * Nota: tutte le letture/scritture sono lato browser (nessuna chiamata in SSR),
- * cosi' il modulo resta utilizzabile anche con hosting statico su IIS.
- */
-
-const BASE =
-  (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_BASE_URL) ||
-  "/api";
+export const BASE = import.meta.env["VITE_API_BASE_URL"] + "/api";
 
 const TOKEN_KEY = "areato.token";
-
+type Dict = Record<string, string>;
 export const auth = {
   get token(): string | null {
     if (typeof window === "undefined") return null;
@@ -26,7 +15,10 @@ export const auth = {
 };
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -37,12 +29,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const t = auth.token;
   if (t) headers.set("Authorization", `Bearer ${t}`);
-
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
+
+  // --- Handle 401 Unauthorized ---
   if (res.status === 401) {
-    auth.token = null;
-    throw new ApiError(401, "Sessione scaduta, effettuare nuovamente l'accesso.");
+    auth.token = null; // clear expired token
+    // Optional: redirect to login, but avoid if already on login page
+    if (typeof window !== "undefined" && !window.location.pathname.includes("/login")) {
+      window.location.href = "/login"; // adapt to your actual login route
+    }
+    // throw new ApiError(401, "Sessione scaduta, effettuare nuovamente l'accesso.");
   }
+
   if (!res.ok) {
     let msg = `Errore ${res.status}`;
     try {
@@ -55,13 +53,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (res.status === 204) return undefined as T;
   const ct = res.headers.get("content-type") ?? "";
-  return (ct.includes("application/json") ? await res.json() : ((await res.blob()) as unknown)) as T;
+  return (
+    ct.includes("application/json") ? await res.json() : ((await res.blob()) as unknown)
+  ) as T;
 }
 
-const get = <T,>(p: string) => request<T>(p);
-const post = <T,>(p: string, body?: unknown) =>
+const get = <T>(p: string) => request<T>(p);
+const post = <T>(p: string, body?: unknown) =>
   request<T>(p, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
-const put = <T,>(p: string, body?: unknown) =>
+const put = <T>(p: string, body?: unknown) =>
   request<T>(p, { method: "PUT", body: body === undefined ? undefined : JSON.stringify(body) });
 
 // ----------------------------------------------------------------- tipi ----
@@ -76,6 +76,7 @@ export type UtenteDto = {
   tourOperatorId?: number;
   tourOperatorNome?: string;
   lingua: string;
+  loginTemporaneo?: boolean;
 };
 
 export type PrezzoDto = { id: number; tipologia: string; importo: number };
@@ -97,13 +98,13 @@ export type GaraDto = {
   settori: SettoreDto[];
 };
 
-export type RigaRequest = { garaId: number; settoreId: number; prezzoId: number; quantita: number };
+export type RigaRequest = { garaId: number; settoreId: string; prezzoId: number; quantita: number };
 
 export type OpzioneRigaDto = {
   id: number;
   garaId: number;
   gara: string;
-  settoreId: number;
+  settoreId: string;
   settore: string;
   prezzoId: number;
   tipologia: string;
@@ -140,7 +141,7 @@ export type PrenotazioneRigaDto = {
   id: number;
   garaId: number;
   gara: string;
-  settoreId: number;
+  settoreId: string;
   settore: string;
   tipologia: string;
   quantita: number;
@@ -169,6 +170,7 @@ export type PrenotazioneDto = {
   confermataIl?: string;
   pdfInviatoIl?: string;
   righe: PrenotazioneRigaDto[];
+  ruolo: string;
 };
 
 export type TourOperatorDto = {
@@ -181,6 +183,7 @@ export type TourOperatorDto = {
   plafond?: number;
   scontoPartner: number;
   abilitato: boolean;
+  azienda?: string;
 };
 
 export type RiepilogoRigaDto = {
@@ -218,14 +221,14 @@ export type AuditDto = {
   ip?: string;
 };
 
-// ------------------------------------------------------------- endpoint ----
+// ---- endpoint ----
 
 export const api = {
-  // Autenticazione
-  login: async (email: string, password: string) => {
+  login: async (identifier: string, password: string, ruolo: "TO" | "ADMIN") => {
     const r = await post<{ token: string; scadeIl: string; utente: UtenteDto }>("/auth/login", {
-      email,
+      name: identifier,
       password,
+      ruolo,
     });
     auth.token = r.token;
     return r.utente;
@@ -234,12 +237,29 @@ export const api = {
     auth.token = null;
   },
   me: () => get<UtenteDto>("/auth/me"),
-  setPassword: (token: string, email: string, password: string) =>
-    post<void>("/auth/set-password", { token, email, password }),
+  setPassword: (id: number, password: string) =>
+    post<void>("/auth/set-password", { Id: id, password }),
 
   // Catalogo
+
   gare: (lang = "it") => get<GaraDto[]>(`/catalogo/gare?lang=${lang}`),
   syncCatalogo: () => post<unknown>("/catalogo/sync"),
+
+  catalogoSp: {
+    gare: (garaId?: number) =>
+      get<import("./catalog").Gara[]>(`/gare${garaId ? `?garaId=${garaId}` : ""}`),
+    settori: (garaId?: number) =>
+      get<import("./catalog").Settore[]>(`/settori${garaId ? `?garaId=${garaId}` : ""}`),
+    prezzi: (garaId?: number, settoreId?: string) => {
+      const q = new URLSearchParams();
+      if (garaId) q.set("garaId", String(garaId));
+      if (settoreId) q.set("settoreId", settoreId);
+      const s = q.toString();
+      return get<import("./catalog").Prezzo[]>(`/prezzi${s ? `?${s}` : ""}`);
+    },
+    completo: () => get<import("./catalog").GaraCatalogo[]>("/catalogo/completo"),
+    refresh: () => post<unknown>("/catalogo/refresh"),
+  },
 
   // Opzioni
   opzioni: (params: { toId?: number; stato?: string } = {}) =>
@@ -257,16 +277,21 @@ export const api = {
     post<{ accodate: number }>("/opzioni/avvisi-scadenza", { ids, messaggioAggiuntivo }),
 
   // Prenotazioni
-  prenotazioni: (params: { toId?: number; stato?: string } = {}) =>
+  prenotazioni: (params: { role: string; tourOperatorId: number; toId?: number; stato?: string }) =>
     get<PrenotazioneDto[]>(`/prenotazioni?${new URLSearchParams(clean(params))}`),
   prenotazione: (id: number) => get<PrenotazioneDto>(`/prenotazioni/${id}`),
+
   creaPrenotazione: (body: {
     tourOperatorId?: number;
     cliente?: string;
     noteTo?: string;
     applicaScontoPartner: boolean;
     righe: RigaRequest[];
+    role: string; // NEW
+    userId?: number; // NEW
+    ruolo: string; // NEW
   }) => post<PrenotazioneDto>("/prenotazioni", body),
+
   convertiOpzione: (
     opzioneId: number,
     body: {
@@ -276,10 +301,29 @@ export const api = {
       righe: { opzioneRigaId: number; quantita: number }[];
     },
   ) => post<PrenotazioneDto>(`/prenotazioni/da-opzione/${opzioneId}`, body),
-  confermaPrenotazione: (id: number, inviaEmail = true) =>
-    post<PrenotazioneDto>(`/prenotazioni/${id}/conferma?inviaEmail=${inviaEmail}`),
-  annullaPrenotazione: (id: number, motivo?: string) =>
-    post<void>(`/prenotazioni/${id}/annulla`, motivo ?? null),
+  confermaPrenotazione: (
+    id: number,
+    role: string,
+    tourOperatorId: number,
+    userId?: number,
+    inviaEmail = true,
+  ) =>
+    post<PrenotazioneDto>(
+      `/prenotazioni/${id}/conferma?inviaEmail=${inviaEmail}&role=${role}&tourOperatorId=${tourOperatorId}` +
+        (userId ? `&userId=${userId}` : ""),
+    ),
+  annullaPrenotazione: (
+    id: number,
+    motivo: string | undefined,
+    role: string,
+    tourOperatorId: number,
+    userId?: number,
+  ) =>
+    post<void>(
+      `/prenotazioni/${id}/annulla?role=${role}&tourOperatorId=${tourOperatorId}` +
+        (userId ? `&userId=${userId}` : ""),
+      motivo ?? null,
+    ),
   salvaSpettatori: (
     rigaId: number,
     spettatori: { id?: number; nome: string; cognome: string; email?: string; nazione?: string }[],
@@ -288,30 +332,53 @@ export const api = {
     `${BASE}/prenotazioni/${id}/pdf${lang ? `?lang=${lang}` : ""}`,
 
   // Admin
-  tourOperators: (q?: string) => get<TourOperatorDto[]>(`/admin/tour-operators${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  tourOperators: (q?: string) =>
+    get<TourOperatorDto[]>(`/admin/tour-operators${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   abilitaTo: (id: number, abilitato: boolean) =>
     post<void>(`/admin/tour-operators/${id}/abilita?abilitato=${abilitato}`),
   scontoPartner: (id: number, percentuale: number) =>
     post<void>(`/admin/tour-operators/${id}/sconto-partner?percentuale=${percentuale}`),
-  invito: (body: { tourOperatorId: number; email: string; nomeCompleto?: string; lingua: string }) =>
-    post<{ utenteId: number }>("/admin/inviti", body),
+  invito: (body: {
+    tourOperatorId: number;
+    email: string;
+    nomeCompleto?: string;
+    lingua: string;
+  }) => post<{ utenteId: number }>("/admin/inviti", body),
   registraPagamento: (
     prenotazioneId: number,
     body: { importo: number; dataValuta: string; metodo: string; riferimento?: string },
-  ) => post<{ totalePagato: number; stato: string }>(`/admin/prenotazioni/${prenotazioneId}/pagamenti`, body),
-  emettiTitoli: (prenotazioneId: number) => post<unknown>(`/admin/prenotazioni/${prenotazioneId}/emetti`),
+  ) =>
+    post<{ totalePagato: number; stato: string }>(
+      `/admin/prenotazioni/${prenotazioneId}/pagamenti`,
+      body,
+    ),
+  emettiTitoli: (prenotazioneId: number) =>
+    post<unknown>(`/admin/prenotazioni/${prenotazioneId}/emetti`),
   aggiornaIntestatario: (titoloId: number, nominativo: string) =>
     put<void>(`/admin/titoli/${titoloId}/intestatario`, nominativo),
   riepilogo: (toId?: number) =>
     get<RiepilogoRigaDto[]>(`/admin/riepilogo${toId ? `?toId=${toId}` : ""}`),
-  riepilogoExcelUrl: (toId?: number) => `${BASE}/admin/riepilogo/excel${toId ? `?toId=${toId}` : ""}`,
+  riepilogoExcelUrl: (toId?: number) =>
+    `${BASE}/admin/riepilogo/excel${toId ? `?toId=${toId}` : ""}`,
   audit: (params: { toId?: number; entita?: string } = {}) =>
     get<AuditDto[]>(`/admin/audit?${new URLSearchParams(clean(params))}`),
   inviaCodaEmail: () => post<{ inviate: number }>("/admin/email/invia"),
+  getTraduzioni: async (lang: string): Promise<{ lingua: string; traduzioni: Dict }> => {
+    return get<{ lingua: string; traduzioni: Dict }>(`/i18n/traduzioni?lang=${lang}`);
+  },
+  toggleAbilitato: (id: number) => post<void>("/admin/toggle-abilitato", { tourOperatorId: id }),
+  tourOperatorsByName: (name: string) =>
+    get<TourOperatorDto[]>(`/admin/tour-operatorsbyname?name=${encodeURIComponent(name)}`),
+  sendInvitationEmail: (tourOperatoreId: number) =>
+    post<{ message: string }>("/email/send-invitation", { tourOperatoreId }),
+  sendEmailForResetPassword: (email: string) =>
+    post<{ message: string }>("/email/emailresetpassword", { email }),
 };
 
 function clean(o: Record<string, unknown>): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(o).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => [k, String(v)]),
+    Object.entries(o)
+      .filter(([, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => [k, String(v)]),
   );
 }

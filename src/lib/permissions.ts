@@ -50,5 +50,5 @@ export const CAPABILITIES: Record<Role, Capability[]> = {
 };
 
 export function can(role: Role, capability: Capability): boolean {
-  return CAPABILITIES[role].includes(capability);
+  return CAPABILITIES[role]?.includes(capability);
 }

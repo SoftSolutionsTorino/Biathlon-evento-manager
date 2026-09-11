@@ -1,0 +1,40 @@
+ Retrieved user info for TourOperatoreId 33611: Email=s.sanfilippo@softsolutions-srl.com, Lingua=1, Password=123456789
+
+
+
+ OPEN SYMMETRIC KEY Customer_Key01  
+		DECRYPTION BY CERTIFICATE Biathlon01;  
+	DECLARE @ErrorSave INT
+	SET @ErrorSave = 0
+	Select
+		CONVERT(varchar(20), DecryptByKey(CNome)) as Nome,
+		CONVERT(varchar(20), DecryptByKey(CCognome)) as Cognome,
+		CONVERT(varchar(50), DecryptByKey(CIndirizzo)) as Indirizzo,
+		Cap,
+		Citta,
+		Provincia,
+		NumCivico,
+		Stato,
+		[Login],
+		[Password],
+		IsNull(CONVERT(varchar(50), DecryptByKey(CEmail)),'') as Email,
+		IsNull(CONVERT(varchar(20), DecryptByKey(CTelefono)),'') as Telefono,		
+		IsNull(Cellulare,'') as Cellulare ,
+		IsNull(Fax,''),
+		IsNull(CONVERT(varchar(16), DecryptByKey(CCodiceFiscale)),'') as CodiceFiscale,
+		IdAnagrafica,
+		Convert(Varchar(10), DataNascita, 103) as DataNascita,
+		ComuneNascita,
+		Lingua,
+		Azienda,
+		TipoUtente,
+		TicketAlert,
+		IsNull(CONVERT(varchar(7), DecryptByKey(CodDestFE)),'') AS CodDestFE,
+		IsNull(CONVERT(varchar(80), DecryptByKey(PecDestFE)),'') AS PecDestFE,
+		TelefonoVerificato,
+		EmailVerificata,
+		isnull(AnagraficaUtenteFinale.ipaddress,'') as ipaddress, AnagraficaUtenteFinale.Agente, isnull(AnagraficaUtenteFinale.prefisso,'') as prefisso, 
+		DataConsenso,
+		AbilitatoGestionaleOTA
+	From
+		AnagraficaUtenteFinale where IdAnagrafica = 33611

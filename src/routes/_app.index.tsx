@@ -59,8 +59,17 @@ function KpiCard({
 
 function Dashboard() {
   const {
-    options, bookings, sales, races, sectors, tourOperators, currentToId,
-    isAdmin, allOptions, allSales,
+    options,
+    bookings,
+    sales,
+    races,
+    sectors,
+    tourOperators,
+    currentToId,
+    isAdmin,
+    allOptions,
+    allSales,
+    user,
   } = useToStore();
   const { t } = useI18n();
   const { fmtDate } = useFormatters();
@@ -70,12 +79,13 @@ function Dashboard() {
   const expiringSoon = activeOptions.filter((o) => daysUntil(o.expiresAt) <= 2);
   const openBookings = bookings.filter((b) => b.status !== "issued" && b.status !== "cancelled");
   const issuedQty = sales.reduce((s, x) => s + x.qty, 0);
-  const plafondPct = Math.round((to.used / to.plafond) * 100);
+  const plafondPct = Math.round((to?.used / to?.plafond) * 100);
 
   const pendingCount = allOptions.filter((o) => o.status === "pending").length;
   const enabledCount = tourOperators.filter((o) => o.enabled).length;
   const globalRevenue = allSales.reduce((s, x) => s + x.total, 0);
 
+  console.log(user);
   return (
     <div className="space-y-6">
       <div>
@@ -95,7 +105,7 @@ function Dashboard() {
               hint={t("dash.kpi.pendingValidation.hint")}
               tone="warning"
             />
-            <KpiCard
+            {/* <KpiCard
               label={t("dash.kpi.operators")}
               value={String(enabledCount)}
               icon={Users}
@@ -108,8 +118,12 @@ function Dashboard() {
               icon={Ticket}
               hint={t("dash.kpi.issued.hint", { count: allSales.length })}
               tone="success"
+            /> */}
+            <KpiCard
+              label={t("dash.kpi.revenue")}
+              value={fmtEur(globalRevenue)}
+              icon={TrendingUp}
             />
-            <KpiCard label={t("dash.kpi.revenue")} value={fmtEur(globalRevenue)} icon={TrendingUp} />
           </>
         ) : (
           <>
@@ -138,9 +152,9 @@ function Dashboard() {
             />
             <KpiCard
               label={t("dash.kpi.plafond")}
-              value={fmtEur(to.used)}
+              value={fmtEur(to?.used)}
               icon={Wallet}
-              hint={t("dash.kpi.plafond.hint", { total: fmtEur(to.plafond), pct: plafondPct })}
+              hint={t("dash.kpi.plafond.hint", { total: fmtEur(to?.plafond), pct: plafondPct })}
             />
           </>
         )}
@@ -170,9 +184,9 @@ function Dashboard() {
               return (
                 <div key={o.id} className="flex items-center justify-between rounded-md border p-3">
                   <div>
-                    <div className="text-sm font-medium">{r.name}</div>
+                    <div className="text-sm font-medium">{r?.name}</div>
                     <div className="text-xs text-muted-foreground">
-                      {sec.name} · {o.qty} {t("common.seats")} · {fmtDate(o.expiresAt)}
+                      {sec?.name} · {o.qty} {t("common.seats")} · {fmtDate(o.expiresAt)}
                     </div>
                   </div>
                   <Badge variant={d <= 1 ? "destructive" : "secondary"}>
@@ -184,21 +198,23 @@ function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card>
+        {/* <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <TrendingUp className="h-4 w-4 text-primary" /> {t("dash.plafond")}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="text-2xl font-semibold">{fmtEur(to.plafond - to.used)}</div>
+            <div className="text-2xl font-semibold">{fmtEur(to?.plafond - to?.used)}</div>
             <div className="text-xs text-muted-foreground">
-              {t("dash.plafond.available", { total: fmtEur(to.plafond) })}
+              {t("dash.plafond.available", { total: fmtEur(to?.plafond) })}
             </div>
             <Progress value={plafondPct} />
-            <div className="text-xs text-muted-foreground">{t("dash.plafond.used", { pct: plafondPct })}</div>
+            <div className="text-xs text-muted-foreground">
+              {t("dash.plafond.used", { pct: plafondPct })}
+            </div>
           </CardContent>
-        </Card>
+        </Card> */}
       </div>
 
       <Card>
