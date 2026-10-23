@@ -1,15 +1,17 @@
 import * as React from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Trash2, ShoppingCart } from "lucide-react";
+import { Trash2, ShoppingCart, Loader2 } from "lucide-react";
 import { useToStore, fmtEur, fmtDateOnly } from "@/lib/toStore";
 import { useI18n } from "@/lib/i18n";
 import { can } from "@/lib/permissions";
 import { ReadOnlyNotice } from "@/components/AdminOnly";
+import { prefetchDettaglioGara } from "@/lib/catalog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
@@ -20,6 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "sonner";
+import { generatePdfBase64, languageFromUser } from "@/lib/pdf";
 
 export const Route = createFileRoute("/_app/cart")({
   component: CartPage,
@@ -41,7 +44,15 @@ export const Route = createFileRoute("/_app/cart")({
     ],
   }),
 });
+
 type Role = "admin" | "to";
+type SubmitKind = "option" | "booking";
+
+// Se dopo questo timeout i settori non sono ancora risolvibili,
+// forziamo il render (evita skeleton infinito se una gara/settore
+// è stato cancellato dal DB ma è ancora in sessionStorage).
+const DETAILS_TIMEOUT_MS = 8000;
+
 function CartPage() {
   const {
     cart,
@@ -52,42 +63,174 @@ function CartPage() {
     removeCartItem,
     clearCart,
     submitCart,
-    optionExpiry,
+    expiryDate: optionExpiry,
+    registerSectors,
+    sendBookingPdf,
   } = useToStore();
   const { t } = useI18n();
   const [customer, setCustomer] = React.useState("");
   const [note, setNote] = React.useState("");
-
+  const [forcedReady, setForcedReady] = React.useState(false);
+  // pending = quale submit è in corso (null = nessuno). Così lo spinner
+  // appare SOLO sul bottone cliccato, ma entrambi restano disabilitati.
+  const [pending, setPending] = React.useState<SubmitKind | null>(null);
+  const loading = pending !== null;
   const canOption = can(user?.ruolo?.toLowerCase() as Role, "option.create");
   const canBooking = can(user?.ruolo?.toLowerCase() as Role, "booking.create");
 
-  const rows = cart.map((c) => {
-    const race = races.find((r) => r.id === c.raceId);
-    const sector = sectors.find((s) => s.id === c.sectorId);
-    const price = sector?.priceTo ?? 0;
-    return { ...c, race, sector, price, subtotal: price * c.qty };
-  });
+  // ---- Fix race condition -------------------------------------------------
+  // Tutti gli item del carrello hanno il loro settore risolto?
+  // I settori sono la parte che manca di solito al reload della pagina.
+  const detailsReady = React.useMemo(
+    () => cart.length === 0 || cart.every((c) => sectors.some((s) => s.id === c.sectorId)),
+    [cart, sectors],
+  );
+
+  // Assicura che i settori di tutte le gare nel carrello siano caricati.
+  // Idempotente: se già presenti, non fa nulla (prefetchDettaglioGara è cached).
+  React.useEffect(() => {
+    if (cart.length === 0) return;
+
+    const missingRaceIds = [
+      ...new Set(
+        cart
+          .filter((c) => !sectors.some((s) => s.id === c.sectorId))
+          .map((c) => Number(c.raceId))
+          .filter(Number.isFinite),
+      ),
+    ];
+    if (missingRaceIds.length === 0) return;
+
+    let alive = true;
+    Promise.all(
+      missingRaceIds.map((id) =>
+        prefetchDettaglioGara(id)
+          .then((d) => {
+            if (alive) registerSectors(id, d);
+          })
+          .catch(() => undefined),
+      ),
+    ).catch(() => undefined);
+
+    return () => {
+      alive = false;
+    };
+  }, [cart, sectors, registerSectors]);
+
+  // Safety net: se dopo N secondi i settori non sono ancora risolti
+  // (es. gara cancellata), forziamo il render per non restare bloccati.
+  React.useEffect(() => {
+    if (cart.length === 0 || detailsReady || forcedReady) return;
+    const timer = setTimeout(() => setForcedReady(true), DETAILS_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [cart.length, detailsReady, forcedReady]);
+
+  // Reset del flag quando il carrello cambia (nuovi item → rivaluta da zero).
+  React.useEffect(() => {
+    setForcedReady(false);
+  }, [cart.length]);
+
+  // ---- Derivate -----------------------------------------------------------
+  const rows = React.useMemo(
+    () =>
+      cart.map((c) => {
+        const race = races.find((r) => r.id === c.raceId);
+        const sector = sectors.find((s) => s.id === c.sectorId);
+        const price = sector?.priceTo ?? 0;
+        return { ...c, race, sector, price, subtotal: price * c.qty };
+      }),
+    [cart, races, sectors],
+  );
 
   const totalQty = rows.reduce((a, r) => a + r.qty, 0);
   const total = rows.reduce((a, r) => a + r.subtotal, 0);
   const hasNumbered = rows.some((r) => r.sector?.numbered);
 
-  const send = async (kind: "option" | "booking") => {
+  const send = async (kind: SubmitKind) => {
     if (rows.length === 0) return;
-    if (kind === "booking" && !customer.trim()) {
-      toast.error(t("cart.customerRequired"));
-      return;
-    }
-    const n = await submitCart({ kind, customer, note });
-    if (n > 0) {
-      toast.success(
-        kind === "option" ? t("cart.sent.option", { n }) : t("cart.sent.booking", { n }),
-      );
-      setCustomer("");
-      setNote("");
+    if (pending !== null) return;
+
+    setPending(kind);
+    try {
+      const result = await submitCart({ kind, note });
+
+      if (result.count > 0) {
+        toast.success(
+          kind === "option"
+            ? t("cart.sent.option", { n: result.count })
+            : t("cart.sent.booking", { n: result.count }),
+        );
+        setCustomer("");
+        setNote("");
+      }
+
+      // --- NEW: PDF + upload per il booking ---
+      if (kind === "booking" && result.prenotazione) {
+        try {
+          // const pren = result.prenotazione;
+          // const b64 = await generatePdfBase64({
+          //   kind: "BOOKING",
+          //   lang: languageFromUser(user?.lingua),
+          //   date: pren.creatoIl,
+          //   number: pren.numero,
+          //   rows: pren.righe.map((r) => ({
+          //     date: "", // opzionale: potresti passare la data della gara
+          //     race: r.gara,
+          //     ticketType: r.tipologia,
+          //     category: r.settore,
+          //     qty: r.quantita,
+          //     unitPrice: r.prezzoUnitario,
+          //     total: r.totale,
+          //   })),
+          //   serviceFees: pren.totaleCommissioni,
+          //   emailFees: 0,
+          //   grandTotal: pren.totale,
+          //   customer: { name: pren.cliente },
+          //   user,
+          //   settings: null, // vedi nota sotto
+          //   t,
+          // });
+          // await api.uploadPrenotazionePdf(pren.id, b64);
+          await sendBookingPdf(result.prenotazione);
+        } catch (pdfErr) {
+          console.error("[cart] PDF upload failed:", pdfErr);
+          toast.error("Prenotazione creata, ma invio email/PDF non riuscito.");
+        }
+      }
+    } catch (err) {
+      console.error("[cart] submitCart failed:", err);
+    } finally {
+      setPending(null);
     }
   };
 
+  // ---- Guard: skeleton finché i settori non sono pronti -------------------
+  if (cart.length > 0 && !detailsReady && !forcedReady) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-xl font-semibold sm:text-2xl">{t("cart.title")}</h1>
+          <p className="text-sm text-muted-foreground">{t("cart.subtitle")}</p>
+        </div>
+
+        <ReadOnlyNotice />
+
+        <Card>
+          <CardContent
+            className="space-y-3 p-6"
+            aria-busy="true"
+            aria-label={t("races.loadingDetail")}
+          >
+            <Skeleton className="h-8 w-40" />
+            <Skeleton className="h-24 w-full rounded-xl" />
+            <Skeleton className="h-24 w-full rounded-xl" />
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // ---- Render normale -----------------------------------------------------
   return (
     <div className="space-y-6">
       <div>
@@ -114,7 +257,7 @@ function CartPage() {
               <CardTitle className="text-base sm:text-lg">
                 {t("cart.lines", { n: rows.length })}
               </CardTitle>
-              <Button variant="ghost" size="sm" onClick={clearCart}>
+              <Button variant="ghost" size="sm" onClick={clearCart} disabled={loading}>
                 {t("cart.clear")}
               </Button>
             </CardHeader>
@@ -130,7 +273,12 @@ function CartPage() {
                           {r.sector?.name} · {fmtEur(r.price)}
                         </div>
                       </div>
-                      <Button variant="ghost" size="icon" onClick={() => removeCartItem(r.id)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeCartItem(r.id)}
+                        disabled={loading}
+                      >
                         <Trash2 className="size-4" />
                       </Button>
                     </div>
@@ -140,6 +288,7 @@ function CartPage() {
                         min={1}
                         className="h-8 w-24"
                         value={r.qty}
+                        disabled={loading}
                         onChange={(e) =>
                           updateCartItem(r.id, { qty: Math.max(1, Number(e.target.value)) })
                         }
@@ -152,6 +301,7 @@ function CartPage() {
                       className="mt-2"
                       value={r.note ?? ""}
                       placeholder={t("cart.lineNote")}
+                      disabled={loading}
                       onChange={(e) => updateCartItem(r.id, { note: e.target.value })}
                     />
                   </div>
@@ -190,6 +340,7 @@ function CartPage() {
                             min={1}
                             className="h-8 w-24"
                             value={r.qty}
+                            disabled={loading}
                             onChange={(e) =>
                               updateCartItem(r.id, { qty: Math.max(1, Number(e.target.value)) })
                             }
@@ -200,6 +351,7 @@ function CartPage() {
                             className="h-8"
                             value={r.note ?? ""}
                             placeholder={t("cart.lineNote")}
+                            disabled={loading}
                             onChange={(e) => updateCartItem(r.id, { note: e.target.value })}
                           />
                         </TableCell>
@@ -207,7 +359,12 @@ function CartPage() {
                           {fmtEur(r.subtotal)}
                         </TableCell>
                         <TableCell>
-                          <Button variant="ghost" size="icon" onClick={() => removeCartItem(r.id)}>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeCartItem(r.id)}
+                            disabled={loading}
+                          >
                             <Trash2 className="size-4" />
                           </Button>
                         </TableCell>
@@ -226,7 +383,7 @@ function CartPage() {
             <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
               <div className="flex flex-wrap gap-4 text-sm">
                 <span>
-                  {t("common.seats")}: <b className="tabular-nums">{totalQty}</b>
+                  {t("common.quantity")}: <b className="tabular-nums">{totalQty}</b>
                 </span>
                 <span>
                   {t("common.total")}: <b className="tabular-nums">{fmtEur(total)}</b>
@@ -234,15 +391,20 @@ function CartPage() {
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
+                {/* <div className="space-y-2">
                   <Label htmlFor="cust">{t("common.customer")}</Label>
                   <Input id="cust" value={customer} onChange={(e) => setCustomer(e.target.value)} />
-                </div>
+                </div> */}
                 <div className="space-y-2">
                   <Label htmlFor="gnote">
                     {t("cart.requestNote")} ({t("common.optional")})
                   </Label>
-                  <Input id="gnote" value={note} onChange={(e) => setNote(e.target.value)} />
+                  <Input
+                    id="gnote"
+                    value={note}
+                    disabled={loading}
+                    onChange={(e) => setNote(e.target.value)}
+                  />
                 </div>
               </div>
 
@@ -253,12 +415,23 @@ function CartPage() {
 
               <div className="flex flex-wrap gap-2">
                 {canOption && (
-                  <Button onClick={() => void send("option")} disabled={hasNumbered}>
+                  <Button
+                    onClick={() => void send("option")}
+                    disabled={hasNumbered || loading}
+                    aria-busy={pending === "option"}
+                  >
+                    {pending === "option" && <Loader2 className="mr-2 size-4 animate-spin" />}
                     {t("cart.submit.option")}
                   </Button>
                 )}
                 {canBooking && (
-                  <Button variant="outline" onClick={() => void send("booking")}>
+                  <Button
+                    variant="outline"
+                    onClick={() => void send("booking")}
+                    disabled={loading}
+                    aria-busy={pending === "booking"}
+                  >
+                    {pending === "booking" && <Loader2 className="mr-2 size-4 animate-spin" />}
                     {t("cart.submit.booking")}
                   </Button>
                 )}

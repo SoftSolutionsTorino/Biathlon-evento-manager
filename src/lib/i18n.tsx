@@ -735,11 +735,11 @@ const FALLBACK_DICTS: Record<Lang, Dict> = { it, de, en };
 const CACHE_KEY_PREFIX = "areato.translations.";
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 1 day (in milliseconds)
 
-// ----- Helper functions for localStorage caching -----
+// ----- Helper functions for sessionStorage caching -----
 function getCachedTranslations(lang: Lang): Dict | null {
   try {
     const key = CACHE_KEY_PREFIX + lang;
-    const raw = window.localStorage.getItem(key);
+    const raw = window.sessionStorage.getItem(key);
     if (!raw) return null;
     const data = JSON.parse(raw);
     // Check if cache is still valid (not expired)
@@ -747,7 +747,7 @@ function getCachedTranslations(lang: Lang): Dict | null {
       return data.dict;
     }
     // Cache expired → remove it
-    window.localStorage.removeItem(key);
+    window.sessionStorage.removeItem(key);
     return null;
   } catch {
     return null;
@@ -757,7 +757,7 @@ function getCachedTranslations(lang: Lang): Dict | null {
 function setCachedTranslations(lang: Lang, dict: Dict) {
   try {
     const key = CACHE_KEY_PREFIX + lang;
-    window.localStorage.setItem(key, JSON.stringify({ dict, timestamp: Date.now() }));
+    window.sessionStorage.setItem(key, JSON.stringify({ dict, timestamp: Date.now() }));
   } catch {
     /* storage not available or quota exceeded */
   }
@@ -781,9 +781,9 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   const [dict, setDict] = React.useState<Dict | null>(null);
   const [loading, setLoading] = React.useState(true);
 
-  // Load saved language from localStorage on mount
+  // Load saved language from sessionStorage on mount
   React.useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY) as Lang | null;
+    const saved = window.sessionStorage.getItem(STORAGE_KEY) as Lang | null;
     if (saved && saved in FALLBACK_DICTS) {
       setLangState(saved);
     }
@@ -801,7 +801,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // 2. Check localStorage cache
+        // 2. Check sessionStorage cache
         const cached = getCachedTranslations(lang);
         if (cached) {
           translationCache.set(lang, cached);
@@ -831,7 +831,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   const setLang = React.useCallback((l: Lang) => {
     setLangState(l);
     try {
-      window.localStorage.setItem(STORAGE_KEY, l);
+      window.sessionStorage.setItem(STORAGE_KEY, l);
       document.documentElement.lang = l;
     } catch {
       /* storage not available */

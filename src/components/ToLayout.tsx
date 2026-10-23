@@ -1,4 +1,3 @@
-
 import * as React from "react";
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import {
@@ -6,16 +5,12 @@ import {
   CalendarDays,
   Clock,
   ClipboardList,
-  Ticket,
   ScrollText,
   LogOut,
   Bell,
-  Snowflake,
   ChevronRight,
   Users,
   BadgeCheck,
-  Wallet,
-  BarChart3,
   Globe,
   ShieldCheck,
   Menu,
@@ -25,13 +20,7 @@ import { ToStoreProvider, useToStore, daysUntil } from "@/lib/toStore";
 import { I18nProvider, useI18n, LANGS } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import {
   DropdownMenu,
@@ -42,6 +31,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+import biathlonLogo from "./../././../biathlonlogo.png";
+import { ToSearchCombobox } from "./ToSearchCombobox";
 type NavItem = { to: string; labelKey: string; icon: typeof LayoutDashboard; exact?: boolean };
 
 /** Voci comuni (dashboard) + area operativa del Tour Operator. */
@@ -57,7 +48,7 @@ const OPERATIVE_NAV: NavItem[] = [
   { to: "/cart", labelKey: "nav.cart", icon: ShoppingCart },
   { to: "/options", labelKey: "nav.options", icon: Clock },
   { to: "/bookings", labelKey: "nav.bookings", icon: ClipboardList },
-  { to: "/sales", labelKey: "nav.sales", icon: Ticket },
+  // { to: "/sales", labelKey: "nav.sales", icon: Ticket },
 ];
 
 const AUDIT_NAV: NavItem = { to: "/audit", labelKey: "nav.audit", icon: ScrollText };
@@ -65,9 +56,12 @@ const AUDIT_NAV: NavItem = { to: "/audit", labelKey: "nav.audit", icon: ScrollTe
 const ADMIN_NAV: NavItem[] = [
   { to: "/admin/operators", labelKey: "nav.admin.operators", icon: Users },
   { to: "/admin/validations", labelKey: "nav.admin.validations", icon: BadgeCheck },
-  { to: "/admin/payments", labelKey: "nav.admin.payments", icon: Wallet },
-  { to: "/admin/summary", labelKey: "nav.admin.summary", icon: BarChart3 },
+  { to: "/admin/general", labelKey: "nav.admin.general", icon: BadgeCheck },
+
+  // { to: "/admin/payments", labelKey: "nav.admin.payments", icon: Wallet },
+  // { to: "/admin/summary", labelKey: "nav.admin.summary", icon: BarChart3 },
 ];
+export type Lang = "it" | "de" | "en";
 
 function LanguageSwitcher() {
   const { lang, setLang } = useI18n();
@@ -113,11 +107,11 @@ function CartButton() {
 function NotificationsBell() {
   const { options, bookings, allOptions, isAdmin } = useToStore();
   const { t } = useI18n();
-  const expiring = options.filter((o) => o.status === "active" && daysUntil(o.expiresAt) <= 2);
+  const expiring = options.filter((o) => o.statoId === 3 && daysUntil(o.expiresAt) <= 2);
   const duePayments = bookings.filter(
-    (b) => b.status !== "issued" && b.status !== "cancelled" && daysUntil(b.paymentDueAt) <= 3,
+    (b) => b.status !== "issued" && b.statoId !== 6 && daysUntil(b.paymentDueAt) <= 3,
   );
-  const pending = isAdmin ? allOptions.filter((o) => o.status === "pending") : [];
+  const pending = isAdmin ? allOptions.filter((o) => o.statoId === 1) : [];
   const total = expiring.length + duePayments.length + (pending.length > 0 ? 1 : 0);
 
   return (
@@ -234,12 +228,14 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
 function BrandHeader() {
   const { t } = useI18n();
   return (
-    <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-5">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
-        <Snowflake className="h-5 w-5" />
-      </div>
-      <div className="flex min-w-0 flex-col leading-tight">
-        <span className="truncate text-sm font-semibold">Antholz TO</span>
+    <div className="flex flex-col  gap-2 border-b border-sidebar-border items-start px-2 py-2">
+      <img
+        src={biathlonLogo}
+        alt="Biathlon Logo Ufficiale"
+        className="h-12 w-auto max-w-full object-contain"
+      />
+      <div className="flex min-w-0 flex-col  leading-tight text-">
+        <span className="truncate text-sm font-semibold">Ticket Shop</span>
         <span className="truncate text-xs text-sidebar-foreground/60">{t("app.title")}</span>
       </div>
     </div>
@@ -305,7 +301,6 @@ function Topbar() {
   const navigate = useNavigate();
   const initials = currentUserEmail.slice(0, 2).toUpperCase();
 
- 
   return (
     <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-4 py-3 sm:px-6 md:h-16 md:flex-nowrap md:py-0">
       <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto sm:flex-1 ">
@@ -315,18 +310,7 @@ function Topbar() {
             <span className="text-xs text-muted-foreground">
               {t("admin.operators.impersonate")}
             </span>
-            <Select value={selectedToId ?? ""} onValueChange={(val) => setSelectedTo(val)}>
-              <SelectTrigger className="h-8 w-full min-w-0 sm:w-[260px]">
-                <SelectValue placeholder={t("admin.operators.selectPlaceholder")} />
-              </SelectTrigger>
-              <SelectContent>
-                {tourOperators.map((op) => (
-                  <SelectItem key={op.id} value={op.id}>
-                    {op.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ToSearchCombobox />
           </div>
         ) : (
           <div className="flex min-w-0 flex-col">

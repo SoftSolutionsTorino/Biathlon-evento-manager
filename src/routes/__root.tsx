@@ -7,10 +7,11 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-
 import appCss from "../styles.css?url";
+import favicon from "../public/favicon.ico";
 import { Toaster } from "@/components/ui/sonner";
 import { ToStoreProvider } from "@/lib/toStore";
+import { I18nProvider } from "@/lib/i18n";
 
 function NotFoundComponent() {
   return (
@@ -37,7 +38,6 @@ function NotFoundComponent() {
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
   const router = useRouter();
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
@@ -74,11 +74,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "Biathlon Event Manager" },
+      { name: "description", content: "Biathlon Event Manager" },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "Biathlon Event Manager" },
+      { property: "og:description", content: "Biathlon Event Manager" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
@@ -87,6 +87,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         rel: "stylesheet",
         href: appCss,
+      },
+      {
+        rel: "icon",
+        type: "image/png",
+        href: favicon,
       },
     ],
   }),
@@ -115,10 +120,12 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ToStoreProvider>
-        <Outlet />
-        <Toaster richColors position="top-right" />
-      </ToStoreProvider>
+      <I18nProvider>
+        <ToStoreProvider>
+          <Outlet />
+          <Toaster richColors position="top-right" />
+        </ToStoreProvider>
+      </I18nProvider>
     </QueryClientProvider>
   );
 }

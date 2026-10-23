@@ -1,12 +1,18 @@
-/** Audit log: tracciamento di ogni azione (chi, cosa, quando, da quale IP). */
+
 import { createFileRoute } from "@tanstack/react-router";
 import { useToStore, downloadCsv } from "@/lib/toStore";
 import { useI18n, useFormatters } from "@/lib/i18n";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 export const Route = createFileRoute("/_app/audit")({
   component: AuditPage,
@@ -51,8 +57,6 @@ function AuditPage() {
               <TableRow>
                 <TableHead>{t("audit.col.datetime")}</TableHead>
                 <TableHead>{t("audit.col.user")}</TableHead>
-                <TableHead>IP</TableHead>
-                <TableHead>{t("audit.col.entity")}</TableHead>
                 <TableHead>{t("audit.col.action")}</TableHead>
                 <TableHead>{t("audit.col.details")}</TableHead>
               </TableRow>
@@ -61,13 +65,13 @@ function AuditPage() {
               {audit.map((a) => (
                 <TableRow key={a.id}>
                   <TableCell className="whitespace-nowrap text-xs">{fmtDate(a.at)}</TableCell>
-                  <TableCell className="text-sm">{a.user}</TableCell>
-                  <TableCell className="font-mono text-xs">{a.ip}</TableCell>
+                  <TableCell className="text-sm">{a.entity}</TableCell>
+                  {/* <TableCell className="font-mono text-xs">{a.ip}</TableCell>
                   <TableCell>
                     <Badge variant="outline">
                       {a.entity} #{a.entityId}
                     </Badge>
-                  </TableCell>
+                  </TableCell> */}
                   <TableCell className="text-sm font-medium">{a.action}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{a.details}</TableCell>
                 </TableRow>

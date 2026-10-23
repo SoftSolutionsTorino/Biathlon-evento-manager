@@ -1,17 +1,20 @@
 import * as React from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronDown, Armchair, Tag, ShoppingCart } from "lucide-react";
+import { ChevronDown, Armchair, Tag, ShoppingCart, CalendarDays, Ticket } from "lucide-react";
 import { useToStore, fmtEur, Role } from "@/lib/toStore";
 import { useI18n, useFormatters } from "@/lib/i18n";
 import { can } from "@/lib/permissions";
 import { ReadOnlyNotice } from "@/components/AdminOnly";
 import {
   loadGare,
+  loadEventiAbbonamento,
   prefetchDettaglioGara,
   nomeGara,
+  nomeEvento,
   nomeSettore,
   tipologiaPrezzo,
   type Gara,
+  type EventoAbbonamento,
   type SettoreCatalogo,
 } from "@/lib/catalog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -63,32 +66,71 @@ function useGare() {
   return { ...state, reload: load };
 }
 
+// ----- Hook: dettaglio (settori + prezzi) lazy per gara -----------------------
 function useDettaglioGara(garaId: number, enabled: boolean) {
-  const { registerSectors } = useToStore(); // <-- aggiunto
   const [data, setData] = React.useState<SettoreCatalogo[] | null>(null);
   const [error, setError] = React.useState(false);
-
   React.useEffect(() => {
     if (!enabled || data) return;
     let alive = true;
     prefetchDettaglioGara(garaId)
-      .then((d) => {
-        if (!alive) return;
-        setData(d);
-        registerSectors(garaId, d);
-      })
+      .then((d) => alive && setData(d))
       .catch(() => alive && setError(true));
     return () => {
       alive = false;
     };
-  }, [enabled, garaId, data, registerSectors]);
-
+  }, [enabled, garaId, data]);
   return { data, error };
+}
+
+// ----- Hook: eventi di TUTTI gli abbonamenti (prefetch parallelo) -------------
+// Chiama GET /api/abbonamenti/eventi?garaId=X per ciascun abbonamento in
+// parallelo, appena il catalogo è pronto. Ritorna una mappa { garaId: eventi[] }.
+function useAllEventiAbbonamenti(abbonamenti: Gara[] | null) {
+  const [data, setData] = React.useState<Record<number, EventoAbbonamento[]>>({});
+
+  // Dep stabile: array di ID ordinati, serializzato.
+  const ids = React.useMemo(
+    () => (abbonamenti ?? []).map((a) => a.id).sort((a, b) => a - b),
+    [abbonamenti],
+  );
+  const key = ids.join(",");
+
+  React.useEffect(() => {
+    if (ids.length === 0) {
+      setData({});
+      return;
+    }
+    let alive = true;
+    Promise.all(ids.map((id) => loadEventiAbbonamento(id).then((evs) => [id, evs] as const)))
+      .then((entries) => {
+        if (!alive) return;
+        const map: Record<number, EventoAbbonamento[]> = {};
+        for (const [id, evs] of entries) map[id] = evs;
+        setData(map);
+      })
+      .catch(() => {
+        if (alive) setData({});
+      });
+    return () => {
+      alive = false;
+    };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return data;
 }
 
 function Races() {
   const { t, lang } = useI18n();
-  const { data: gare, error, reload } = useGare();
+  const { data: catalogo, error, reload } = useGare();
+
+  // sp_GetGare restituisce gare (abbonamento = false, con data/ora) e
+  // abbonamenti (abbonamento = true, senza data/ora): qui vengono separati.
+  const gare = catalogo?.filter((g) => !g.abbonamento) ?? null;
+  const abbonamenti = catalogo?.filter((g) => g.abbonamento) ?? null;
+
+  // Prefetch parallelo di TUTTI gli eventi degli abbonamenti.
+  const eventiByAbb = useAllEventiAbbonamenti(abbonamenti);
 
   return (
     <div className="space-y-6">
@@ -118,27 +160,70 @@ function Races() {
         </div>
       )}
 
-      {gare && (
-        <>
-          <p className="text-xs text-muted-foreground">
-            {t("races.count", { n: gare.filter((g) => g.attiva).length })}
-          </p>
-          <div className="space-y-3">
+      {catalogo && gare && abbonamenti && (
+        <Tabs defaultValue="gare">
+          <TabsList className="grid w-full grid-cols-2 sm:inline-flex sm:w-auto">
+            <TabsTrigger value="gare" className="gap-1.5">
+              <CalendarDays className="size-3.5" /> {t("races.tab.races")} ({gare.length})
+            </TabsTrigger>
+            <TabsTrigger value="abbonamenti" className="gap-1.5">
+              <Ticket className="size-3.5" /> {t("races.tab.subs")} ({abbonamenti.length})
+            </TabsTrigger>
+          </TabsList>
+
+          {/* --- Gare singole: hanno data e ora di programmazione --- */}
+          <TabsContent value="gare" className="mt-4 space-y-3">
+            <p className="text-xs text-muted-foreground">
+              {t("races.count", { n: gare.filter((g) => g.attiva).length })}
+            </p>
+            {gare.length === 0 && (
+              <p className="text-sm text-muted-foreground">{t("races.noRaces")}</p>
+            )}
             {gare.map((g) => (
               <GaraCard key={g.id} gara={g} lang={lang} />
             ))}
-          </div>
-        </>
+          </TabsContent>
+
+          {/* --- Abbonamenti: nessuna data, valgono per le gare comprese --- */}
+          <TabsContent value="abbonamenti" className="mt-4 space-y-3">
+            <div>
+              <h2 className="text-base font-semibold">{t("races.subsTitle")}</h2>
+              <p className="text-xs text-muted-foreground">{t("races.subsSubtitle")}</p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t("races.subsCount", { n: abbonamenti.filter((g) => g.attiva).length })}
+            </p>
+            {abbonamenti.length === 0 && (
+              <p className="text-sm text-muted-foreground">{t("races.noSubs")}</p>
+            )}
+            {abbonamenti.map((g) => (
+              <GaraCard key={g.id} gara={g} lang={lang} eventi={eventiByAbb[g.id] ?? []} />
+            ))}
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   );
 }
 
-function GaraCard({ gara, lang }: { gara: Gara; lang: "it" | "de" | "en" }) {
+// ----- Scheda gara ------------------------------------------------------------
+function GaraCard({
+  gara,
+  lang,
+  eventi = [],
+}: {
+  gara: Gara;
+  lang: "it" | "de" | "en";
+  /** Solo per gli abbonamenti: gare comprese. */
+  eventi?: EventoAbbonamento[];
+}) {
   const { t } = useI18n();
   const { fmtDate } = useFormatters();
   const [open, setOpen] = React.useState(false);
+
+  // Settori/prezzi: caricati per TUTTE le gare (anche abbonamenti).
   const { data: settori, error } = useDettaglioGara(gara.id, open);
+
   const prefetch = () => void prefetchDettaglioGara(gara.id).catch(() => undefined);
 
   return (
@@ -159,16 +244,27 @@ function GaraCard({ gara, lang }: { gara: Gara; lang: "it" | "de" | "en" }) {
               {nomeGara(gara, lang)}
             </CardTitle>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span>{fmtDate(gara.dataOraUtc)}</span>
-              {/* <span> */}
-
-              {/* {t("races.edition")} {gara.edizione} */}
-
-              {/* </span> */}
-              <span className="font-mono">ID {gara.id}</span>
+              {gara.abbonamento ? (
+                <span>
+                  {eventi.length > 0
+                    ? t("garecompresse", { n: eventi.length })
+                    : t("races.subsBadge")}
+                </span>
+              ) : (
+                <span>{fmtDate(gara.dataOraUtc ?? "")}</span>
+              )}
+              {/* <span>
+                {t("races.edition")} {gara.edizione}
+              </span> */}
+              {/* <span className="font-mono">ID {gara.id}</span> */}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {gara.abbonamento && (
+              <Badge variant="outline" className="hidden gap-1 sm:inline-flex">
+                <Ticket className="size-3" /> {t("races.subsBadge")}
+              </Badge>
+            )}
             <Badge variant={gara.attiva ? "default" : "secondary"}>
               {gara.attiva ? t("races.active") : t("races.inactive")}
             </Badge>
@@ -179,6 +275,28 @@ function GaraCard({ gara, lang }: { gara: Gara; lang: "it" | "de" | "en" }) {
 
       {open && (
         <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
+          {/* Sezione GARE COMPRESE (solo abbonamenti) */}
+          {gara.abbonamento && (
+            <div className="mb-4 rounded-md border bg-muted/40 p-3">
+              <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {t("races.includedRaces")}
+              </div>
+              {eventi.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{t("races.noIncludedRaces")}</p>
+              ) : (
+                <ul className="space-y-1 text-sm">
+                  {eventi.map((e) => (
+                    <li key={`${e.garaId}-${e.dataOraUtc}`} className="flex flex-wrap gap-x-2">
+                      <span className="text-muted-foreground">{fmtDate(e.dataOraUtc)}</span>
+                      <span>{nomeEvento(e, lang)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* Settori/prezzi: per TUTTE le gare (anche abbonamenti) */}
           {error && <p className="text-sm text-destructive">{t("races.error")}</p>}
           {!settori && !error && (
             <div className="space-y-2" aria-busy="true" aria-label={t("races.loadingDetail")}>
@@ -192,7 +310,6 @@ function GaraCard({ gara, lang }: { gara: Gara; lang: "it" | "de" | "en" }) {
     </Card>
   );
 }
-
 // ----- Dettaglio: tab Settori / Prezzi ----------------------------------------
 function DettaglioGara({
   gara,
@@ -215,9 +332,9 @@ function DettaglioGara({
         <TabsTrigger value="settori" className="gap-1.5">
           <Armchair className="size-3.5" /> {t("races.sectors")} ({settori.length})
         </TabsTrigger>
-        <TabsTrigger value="prezzi" className="gap-1.5">
+        {/* <TabsTrigger value="prezzi" className="gap-1.5">
           <Tag className="size-3.5" /> {t("races.prices")} ({prezzi.length})
-        </TabsTrigger>
+        </TabsTrigger> */}
       </TabsList>
 
       {/* --- Settori: card su mobile, tabella da tablet in su --- */}
@@ -248,7 +365,7 @@ function DettaglioGara({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-20">ID</TableHead>
+                {/* <TableHead className="w-20">ID</TableHead> */}
                 <TableHead>{t("common.sector")}</TableHead>
                 <TableHead>{t("races.seating")}</TableHead>
                 <TableHead>{t("races.prices")}</TableHead>
@@ -258,7 +375,7 @@ function DettaglioGara({
             <TableBody>
               {settori.map((s) => (
                 <TableRow key={s.id}>
-                  <TableCell className="font-mono text-xs">{s.id}</TableCell>
+                  {/* <TableCell className="font-mono text-xs">{s.id}</TableCell> */}
                   <TableCell className="font-medium">{nomeSettore(s, lang)}</TableCell>
                   <TableCell>
                     <SeatingBadge numbered={s.postiNumerati} />
@@ -281,7 +398,7 @@ function DettaglioGara({
         </div>
       </TabsContent>
 
-      {/* --- Prezzi: listino piatto della gara --- */}
+      {/* --- Prezzi: listino piatto della gara ---
       <TabsContent value="prezzi" className="mt-3">
         {prezzi.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("races.noPrice")}</p>
@@ -314,7 +431,7 @@ function DettaglioGara({
             </Table>
           </div>
         )}
-      </TabsContent>
+      </TabsContent> */}
     </Tabs>
   );
 }
@@ -354,16 +471,12 @@ function ActionButtons({
   canOption: boolean;
   canBooking: boolean;
 }) {
-  const { t, lang } = useI18n();
-  const hasPrice = settore.prezzi.length > 0;
-  if (!hasPrice) return null;
-
-  const priceTo = Math.min(...settore.prezzi.map((p) => p.importo));
-
-  const raceId = String(gara.id);
   const storeSectorId = `${gara.id}-${settore.id}`;
+  const raceId = String(gara.id);
+  const hasPrice = settore.prezzi.length > 0;
+  if (!hasPrice || (!canOption && !canBooking)) return null;
 
-  // Prendi il prezzo con importo minimo (come facevi prima) + il suo prezzoId
+  // Prezzo più economico (default per l'aggiunta rapida).
   const cheapest = settore.prezzi.reduce((min, p) => (p.importo < min.importo ? p : min));
 
   return (
@@ -371,37 +484,32 @@ function ActionButtons({
       <AddToCartDialog
         raceId={raceId}
         sectorId={storeSectorId}
-        prezzoId={cheapest.id}
         numbered={settore.postiNumerati}
-        raceName={nomeGara(gara, lang)}
-        sectorName={nomeSettore(settore, lang)}
-        priceTo={priceTo}
+        prezzoId={cheapest.id}
+        priceTo={cheapest.importo}
       />
     </div>
   );
 }
 
+// ----- Dialog: aggiunta al carrello multi-gara --------------------------------
 function AddToCartDialog({
   raceId,
   sectorId,
   numbered,
-  prezzoId, // <-- NUOVO
-  raceName,
-  sectorName,
+  prezzoId,
   priceTo,
 }: {
   raceId: string;
   sectorId: string;
   numbered: boolean;
-  prezzoId: number; // <-- NUOVO
-  raceName: string;
-  sectorName: string;
+  prezzoId: number;
   priceTo: number;
 }) {
   const { addToCart } = useToStore();
   const { t } = useI18n();
   const [open, setOpen] = React.useState(false);
-  const [qty, setQty] = React.useState(10);
+  const [qty, setQty] = React.useState(1);
   const [note, setNote] = React.useState("");
 
   const submit = () => {
@@ -409,14 +517,13 @@ function AddToCartDialog({
     addToCart({
       raceId,
       sectorId,
-      prezzoId: parseInt(prezzoId.toString()),
+      prezzoId,
       qty,
       note: note.trim() || undefined,
-    }); // <-- prezzoId
-
+    });
     toast.success(t("cart.added", { qty }));
     setOpen(false);
-    setQty(10);
+    setQty(1);
     setNote("");
   };
 
@@ -431,7 +538,7 @@ function AddToCartDialog({
         <DialogHeader>
           <DialogTitle>{t("cart.add.title")}</DialogTitle>
           <DialogDescription>
-            {raceName} — {sectorName} ({fmtEur(priceTo)})
+            {sectorId} ({fmtEur(priceTo)})
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">

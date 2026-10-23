@@ -1,0 +1,596 @@
+/**
+ * Catalogo Gare Anterselva — dati LIVE dal gestionale.
+ * ---------------------------------------------------------------------------
+ * Fonte dati: stored procedure esposte da:
+ *   - GET /api/gare
+ *   - GET /api/settori?garaId=X
+ *   - GET /api/prezzi?garaId=X
+ *   - GET /api/abbonamenti/eventi?garaId=X
+ *
+ * Strategia:
+ *   - All'apertura si carica l'elenco gare + abbonamenti.
+ *   - Settori/prezzi di una gara: LAZY al primo expand + prefetch su hover.
+ *   - Eventi degli abbonamenti: prefetch in parallelo di TUTTI gli abbonamenti
+ *     appena il catalogo è pronto, così la label "N gare comprese" è subito
+ *     visibile e l'expand è istantaneo.
+ */
+import * as React from "react";
+import { createFileRoute } from "@tanstack/react-router";
+import { ChevronDown, Armchair, Tag, ShoppingCart, CalendarDays, Ticket } from "lucide-react";
+import { useToStore, fmtEur, Role } from "@/lib/toStore";
+import { useI18n, useFormatters } from "@/lib/i18n";
+import { can } from "@/lib/permissions";
+import { ReadOnlyNotice } from "@/components/AdminOnly";
+import {
+  loadGare,
+  loadEventiAbbonamento,
+  prefetchDettaglioGara,
+  nomeGara,
+  nomeEvento,
+  nomeSettore,
+  tipologiaPrezzo,
+  type Gara,
+  type EventoAbbonamento,
+  type SettoreCatalogo,
+} from "@/lib/catalog";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+
+export const Route = createFileRoute("/_app/races")({
+  component: Races,
+});
+
+// ----- Hook: elenco gare ------------------------------------------------------
+function useGare() {
+  const [state, setState] = React.useState<{ data: Gara[] | null; error: boolean }>({
+    data: null,
+    error: false,
+  });
+  const load = React.useCallback(() => {
+    setState({ data: null, error: false });
+    loadGare()
+      .then((data) => setState({ data, error: false }))
+      .catch(() => setState({ data: null, error: true }));
+  }, []);
+  React.useEffect(load, [load]);
+  return { ...state, reload: load };
+}
+
+// ----- Hook: dettaglio (settori + prezzi) lazy per gara -----------------------
+function useDettaglioGara(garaId: number, enabled: boolean) {
+  const [data, setData] = React.useState<SettoreCatalogo[] | null>(null);
+  const [error, setError] = React.useState(false);
+  React.useEffect(() => {
+    if (!enabled || data) return;
+    let alive = true;
+    prefetchDettaglioGara(garaId)
+      .then((d) => alive && setData(d))
+      .catch(() => alive && setError(true));
+    return () => {
+      alive = false;
+    };
+  }, [enabled, garaId, data]);
+  return { data, error };
+}
+
+// ----- Hook: eventi di TUTTI gli abbonamenti (prefetch parallelo) -------------
+// Chiama GET /api/abbonamenti/eventi?garaId=X per ciascun abbonamento in
+// parallelo, appena il catalogo è pronto. Ritorna una mappa { garaId: eventi[] }.
+function useAllEventiAbbonamenti(abbonamenti: Gara[] | null) {
+  const [data, setData] = React.useState<Record<number, EventoAbbonamento[]>>({});
+
+  // Dep stabile: array di ID ordinati, serializzato.
+  const ids = React.useMemo(
+    () => (abbonamenti ?? []).map((a) => a.id).sort((a, b) => a - b),
+    [abbonamenti],
+  );
+  const key = ids.join(",");
+
+  React.useEffect(() => {
+    if (ids.length === 0) {
+      setData({});
+      return;
+    }
+    let alive = true;
+    Promise.all(ids.map((id) => loadEventiAbbonamento(id).then((evs) => [id, evs] as const)))
+      .then((entries) => {
+        if (!alive) return;
+        const map: Record<number, EventoAbbonamento[]> = {};
+        for (const [id, evs] of entries) map[id] = evs;
+        setData(map);
+      })
+      .catch(() => {
+        if (alive) setData({});
+      });
+    return () => {
+      alive = false;
+    };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return data;
+}
+
+function Races() {
+  const { t, lang } = useI18n();
+  const { data: catalogo, error, reload } = useGare();
+
+  // sp_GetGare restituisce gare (abbonamento = false, con data/ora) e
+  // abbonamenti (abbonamento = true, senza data/ora): qui vengono separati.
+  const gare = catalogo?.filter((g) => !g.abbonamento) ?? null;
+  const abbonamenti = catalogo?.filter((g) => g.abbonamento) ?? null;
+
+  // Prefetch parallelo di TUTTI gli eventi degli abbonamenti.
+  const eventiByAbb = useAllEventiAbbonamenti(abbonamenti);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-semibold sm:text-2xl">{t("races.title")}</h1>
+        <p className="text-sm text-muted-foreground">{t("races.subtitle")}</p>
+      </div>
+
+      <ReadOnlyNotice />
+
+      {error && (
+        <Card className="border-destructive/40">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm">
+            <span>{t("races.error")}</span>
+            <Button size="sm" variant="outline" onClick={reload}>
+              {t("races.retry")}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {!gare && !error && (
+        <div className="space-y-3" aria-busy="true" aria-label={t("races.loading")}>
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-24 w-full rounded-xl" />
+          ))}
+        </div>
+      )}
+
+      {catalogo && gare && abbonamenti && (
+        <Tabs defaultValue="gare">
+          <TabsList className="grid w-full grid-cols-2 sm:inline-flex sm:w-auto">
+            <TabsTrigger value="gare" className="gap-1.5">
+              <CalendarDays className="size-3.5" /> {t("races.tab.races")} ({gare.length})
+            </TabsTrigger>
+            <TabsTrigger value="abbonamenti" className="gap-1.5">
+              <Ticket className="size-3.5" /> {t("races.tab.subs")} ({abbonamenti.length})
+            </TabsTrigger>
+          </TabsList>
+
+          {/* --- Gare singole: hanno data e ora di programmazione --- */}
+          <TabsContent value="gare" className="mt-4 space-y-3">
+            <p className="text-xs text-muted-foreground">
+              {t("races.count", { n: gare.filter((g) => g.attiva).length })}
+            </p>
+            {gare.length === 0 && (
+              <p className="text-sm text-muted-foreground">{t("races.noRaces")}</p>
+            )}
+            {gare.map((g) => (
+              <GaraCard key={g.id} gara={g} lang={lang} />
+            ))}
+          </TabsContent>
+
+          {/* --- Abbonamenti: nessuna data, valgono per le gare comprese --- */}
+          <TabsContent value="abbonamenti" className="mt-4 space-y-3">
+            <div>
+              <h2 className="text-base font-semibold">{t("races.subsTitle")}</h2>
+              {/* <p className="text-xs text-muted-foreground">{t("races.subsSubtitle")}</p> */}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t("races.subsCount", { n: abbonamenti.filter((g) => g.attiva).length })}
+            </p>
+            {abbonamenti.length === 0 && (
+              <p className="text-sm text-muted-foreground">{t("races.noSubs")}</p>
+            )}
+            {abbonamenti.map((g) => (
+              <GaraCard key={g.id} gara={g} lang={lang} eventi={eventiByAbb[g.id] ?? []} />
+            ))}
+          </TabsContent>
+        </Tabs>
+      )}
+    </div>
+  );
+}
+
+// ----- Scheda gara ------------------------------------------------------------
+function GaraCard({
+  gara,
+  lang,
+  eventi = [],
+}: {
+  gara: Gara;
+  lang: "it" | "de" | "en";
+  /** Solo per gli abbonamenti: gare comprese. */
+  eventi?: EventoAbbonamento[];
+}) {
+  const { t } = useI18n();
+  const { fmtDate } = useFormatters();
+  const [open, setOpen] = React.useState(false);
+
+  // Settori/prezzi: caricati per TUTTE le gare (anche abbonamenti).
+  const { data: settori, error } = useDettaglioGara(gara.id, open);
+
+  const prefetch = () => void prefetchDettaglioGara(gara.id).catch(() => undefined);
+
+  return (
+    <Card className={cn(!gara.attiva && "opacity-70")}>
+      <CardHeader className="p-4 sm:p-6">
+        <button
+          type="button"
+          className="flex w-full items-start justify-between gap-3 text-left"
+          onClick={() => setOpen((o) => !o)}
+          onMouseEnter={prefetch}
+          onFocus={prefetch}
+          onTouchStart={prefetch}
+          aria-expanded={open}
+          aria-label={open ? t("races.collapse") : t("races.expand")}
+        >
+          <div className="min-w-0 flex-1">
+            <CardTitle className="text-base font-semibold leading-snug sm:text-lg">
+              {nomeGara(gara, lang)}
+            </CardTitle>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {gara.abbonamento ? (
+                <span>
+                  {eventi.length > 0
+                    ? t("garecompresse", { n: eventi.length })
+                    : t("races.subsBadge")}
+                </span>
+              ) : (
+                <span>{fmtDate(gara.dataOraUtc ?? "")}</span>
+              )}
+              {/* <span>
+                {t("races.edition")} {gara.edizione}
+              </span> */}
+              {/* <span className="font-mono">ID {gara.id}</span> */}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {gara.abbonamento && (
+              <Badge variant="outline" className="hidden gap-1 sm:inline-flex">
+                <Ticket className="size-3" /> {t("races.subsBadge")}
+              </Badge>
+            )}
+            <Badge variant={gara.attiva ? "default" : "secondary"}>
+              {gara.attiva ? t("races.active") : t("races.inactive")}
+            </Badge>
+            <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} />
+          </div>
+        </button>
+      </CardHeader>
+
+      {open && (
+        <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
+          {/* Sezione GARE COMPRESE (solo abbonamenti) */}
+          {gara.abbonamento && (
+            <div className="mb-4 rounded-md border bg-muted/40 p-3">
+              <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {t("races.includedRaces")}
+              </div>
+              {eventi.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{t("races.noIncludedRaces")}</p>
+              ) : (
+                <ul className="space-y-1 text-sm">
+                  {eventi.map((e) => (
+                    <li key={`${e.garaId}-${e.dataOraUtc}`} className="flex flex-wrap gap-x-2">
+                      <span className="text-muted-foreground">{fmtDate(e.dataOraUtc)}</span>
+                      <span>{nomeEvento(e, lang)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* Settori/prezzi: per TUTTE le gare (anche abbonamenti) */}
+          {error && <p className="text-sm text-destructive">{t("races.error")}</p>}
+          {!settori && !error && (
+            <div className="space-y-2" aria-busy="true" aria-label={t("races.loadingDetail")}>
+              <Skeleton className="h-8 w-48" />
+              <Skeleton className="h-32 w-full" />
+            </div>
+          )}
+          {settori && <DettaglioGara gara={gara} settori={settori} lang={lang} />}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+// ----- Dettaglio: tab Settori / Prezzi ----------------------------------------
+function DettaglioGara({
+  gara,
+  settori,
+  lang,
+}: {
+  gara: Gara;
+  settori: SettoreCatalogo[];
+  lang: "it" | "de" | "en";
+}) {
+  const { t } = useI18n();
+  const { user } = useToStore();
+  const canCreateOption = gara.attiva && can(user?.ruolo.toLowerCase() as Role, "option.create");
+  const canCreateBooking = gara.attiva && can(user?.ruolo.toLowerCase() as Role, "booking.create");
+  const prezzi = settori.flatMap((s) => s.prezzi.map((p) => ({ ...p, settore: s })));
+
+  return (
+    <Tabs defaultValue="settori">
+      <TabsList className="grid w-full grid-cols-2 sm:inline-flex sm:w-auto">
+        <TabsTrigger value="settori" className="gap-1.5">
+          <Armchair className="size-3.5" /> {t("races.sectors")} ({settori.length})
+        </TabsTrigger>
+        {/* <TabsTrigger value="prezzi" className="gap-1.5">
+          <Tag className="size-3.5" /> {t("races.prices")} ({prezzi.length})
+        </TabsTrigger> */}
+      </TabsList>
+
+      {/* --- Settori: card su mobile, tabella da tablet in su --- */}
+      <TabsContent value="settori" className="mt-3">
+        <div className="space-y-2 md:hidden">
+          {settori.map((s) => (
+            <div key={s.id} className="rounded-md border p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">{nomeSettore(s, lang)}</div>
+                  <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                    <span className="font-mono">{s.id}</span>
+                  </div>
+                </div>
+                <SeatingBadge numbered={s.postiNumerati} />
+              </div>
+              <PrezziInline settore={s} lang={lang} />
+              <ActionButtons
+                gara={gara}
+                settore={s}
+                canOption={canCreateOption}
+                canBooking={canCreateBooking}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="hidden overflow-x-auto rounded-md border md:block">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {/* <TableHead className="w-20">ID</TableHead> */}
+                <TableHead>{t("common.sector")}</TableHead>
+                <TableHead>{t("races.seating")}</TableHead>
+                <TableHead>{t("races.prices")}</TableHead>
+                <TableHead className="text-right">{t("common.actions")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {settori.map((s) => (
+                <TableRow key={s.id}>
+                  {/* <TableCell className="font-mono text-xs">{s.id}</TableCell> */}
+                  <TableCell className="font-medium">{nomeSettore(s, lang)}</TableCell>
+                  <TableCell>
+                    <SeatingBadge numbered={s.postiNumerati} />
+                  </TableCell>
+                  <TableCell>
+                    <PrezziInline settore={s} lang={lang} />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <ActionButtons
+                      gara={gara}
+                      settore={s}
+                      canOption={canCreateOption}
+                      canBooking={canCreateBooking}
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </TabsContent>
+
+      {/* --- Prezzi: listino piatto della gara ---
+      <TabsContent value="prezzi" className="mt-3">
+        {prezzi.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("races.noPrice")}</p>
+        ) : (
+          <div className="overflow-x-auto rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-16">ID</TableHead>
+                  <TableHead>{t("common.sector")}</TableHead>
+                  <TableHead>{t("races.priceType")}</TableHead>
+                  <TableHead className="text-right">{t("races.price")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {prezzi.map((p) => (
+                  <TableRow key={`${p.id}-${p.settoreId}`}>
+                    <TableCell className="font-mono text-xs">{p.id}</TableCell>
+                    <TableCell>
+                      <span className="font-mono text-xs text-muted-foreground">{p.settoreId}</span>{" "}
+                      <span className="hidden sm:inline">{nomeSettore(p.settore, lang)}</span>
+                    </TableCell>
+                    <TableCell>{tipologiaPrezzo(p, lang)}</TableCell>
+                    <TableCell className="text-right font-semibold tabular-nums">
+                      {fmtEur(p.importo)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </TabsContent> */}
+    </Tabs>
+  );
+}
+
+function SeatingBadge({ numbered }: { numbered: boolean }) {
+  const { t } = useI18n();
+  return (
+    <Badge variant={numbered ? "default" : "outline"} className="whitespace-nowrap">
+      {numbered ? t("races.seatingNumbered") : t("races.seatingFree")}
+    </Badge>
+  );
+}
+
+function PrezziInline({ settore, lang }: { settore: SettoreCatalogo; lang: "it" | "de" | "en" }) {
+  const { t } = useI18n();
+  if (settore.prezzi.length === 0)
+    return <span className="text-xs text-muted-foreground">{t("races.noPrice")}</span>;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1.5 md:mt-0">
+      {settore.prezzi.map((p) => (
+        <span key={p.id} className="rounded bg-muted px-1.5 py-0.5 text-xs">
+          {tipologiaPrezzo(p, lang)} <b>{fmtEur(p.importo)}</b>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ActionButtons({
+  gara,
+  settore,
+  canOption,
+  canBooking,
+}: {
+  gara: Gara;
+  settore: SettoreCatalogo;
+  canOption: boolean;
+  canBooking: boolean;
+}) {
+  const storeSectorId = `${gara.id}-${settore.id}`;
+  const raceId = String(gara.id);
+  const hasPrice = settore.prezzi.length > 0;
+  if (!hasPrice || (!canOption && !canBooking)) return null;
+
+  // Prezzo più economico (default per l'aggiunta rapida).
+  const cheapest = settore.prezzi.reduce((min, p) => (p.importo < min.importo ? p : min));
+
+  return (
+    <div className="mt-2 flex flex-wrap justify-end gap-2 md:mt-0">
+      <AddToCartDialog
+        raceId={raceId}
+        sectorId={storeSectorId}
+        numbered={settore.postiNumerati}
+        prezzoId={cheapest.id}
+        priceTo={cheapest.importo}
+      />
+    </div>
+  );
+}
+
+// ----- Dialog: aggiunta al carrello multi-gara --------------------------------
+function AddToCartDialog({
+  raceId,
+  sectorId,
+  numbered,
+  prezzoId,
+  priceTo,
+}: {
+  raceId: string;
+  sectorId: string;
+  numbered: boolean;
+  prezzoId: number;
+  priceTo: number;
+}) {
+  const { addToCart } = useToStore();
+  const { t } = useI18n();
+  const [open, setOpen] = React.useState(false);
+  const [qty, setQty] = React.useState(1);
+  const [note, setNote] = React.useState("");
+
+  const submit = () => {
+    if (qty <= 0) return;
+    addToCart({
+      raceId,
+      sectorId,
+      prezzoId,
+      qty,
+      note: note.trim() || undefined,
+    });
+    toast.success(t("cart.added", { qty }));
+    setOpen(false);
+    setQty(1);
+    setNote("");
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" className="gap-1.5">
+          <ShoppingCart className="size-3.5" /> {t("cart.add")}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t("cart.add.title")}</DialogTitle>
+          <DialogDescription>
+            {sectorId} ({fmtEur(priceTo)})
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="qty">{t("common.quantity")}</Label>
+            <Input
+              id="qty"
+              type="number"
+              min={1}
+              value={qty}
+              onChange={(e) => setQty(Number(e.target.value))}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="note">
+              {t("common.notes")} ({t("common.optional")})
+            </Label>
+            <Textarea
+              id="note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={numbered ? t("booking.new.seatNotes") : t("option.new.notePlaceholder")}
+            />
+          </div>
+          {numbered && <p className="text-xs text-muted-foreground">{t("cart.numberedHint")}</p>}
+          <div className="rounded-md bg-muted p-3 text-sm">
+            {t("common.total")}: <span className="font-semibold">{fmtEur(qty * priceTo)}</span>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            {t("common.cancel")}
+          </Button>
+          <Button onClick={submit}>{t("cart.add")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

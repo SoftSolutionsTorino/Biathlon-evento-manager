@@ -1,10 +1,3 @@
-/**
- * Vendite: titoli di accesso emessi, stato finale non modificabile dal TO.
- * Il download del PDF dei titoli è disponibile sia per il TO sia per l'Admin
- * (in precedenza il pulsante non era collegato ad alcuna azione).
- *
- * Responsive: tabella su >= md, elenco a schede su mobile.
- */
 import { createFileRoute } from "@tanstack/react-router";
 import { Download } from "lucide-react";
 import { useToStore, fmtEur, type Sale } from "@/lib/toStore";
@@ -14,7 +7,14 @@ import { ReadOnlyNotice } from "@/components/AdminOnly";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/sales")({
@@ -40,7 +40,7 @@ function SalesPage() {
       operator: operatorName,
       rows: [
         {
-          date: r ? fmtDateOnly(r.date) : "—",
+          date: r ? fmtDateOnly(r.date || new Date().toISOString()) : "—",
           race: r?.name ?? "—",
           sector: sec?.name ?? "—",
           category: sec?.priceCategory ?? "—",
@@ -108,7 +108,8 @@ function SalesPage() {
                   </Badge>
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {t("common.seats")}: <span className="font-medium text-foreground">{s.qty}</span> · {fmtEur(s.total)}
+                  {t("common.seats")}: <span className="font-medium text-foreground">{s.qty}</span>{" "}
+                  · {fmtEur(s.total)}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {t("sales.issuedAt")}: {fmtDate(s.issuedAt)}
@@ -125,7 +126,9 @@ function SalesPage() {
         })}
         {sales.length === 0 && (
           <Card>
-            <CardContent className="py-8 text-center text-sm text-muted-foreground">{t("sales.empty")}</CardContent>
+            <CardContent className="py-8 text-center text-sm text-muted-foreground">
+              {t("sales.empty")}
+            </CardContent>
           </Card>
         )}
       </div>
@@ -163,7 +166,9 @@ function SalesPage() {
                     </TableCell>
                     <TableCell className="text-right font-medium">{s.qty}</TableCell>
                     <TableCell className="text-right">{fmtEur(s.total)}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{fmtDate(s.issuedAt)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {fmtDate(s.issuedAt)}
+                    </TableCell>
                     <TableCell className="text-right">
                       <Button size="sm" variant="outline" onClick={() => downloadPdf(s)}>
                         <Download className="mr-2 h-3.5 w-3.5" />

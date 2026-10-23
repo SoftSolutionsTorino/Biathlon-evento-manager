@@ -9,12 +9,19 @@ export default defineConfig({
   plugins: [
     tanstackStart({
       prerender: {
-        enabled: true, 
-        crawlLinks: true, 
+        enabled: true,
+        crawlLinks: true,
       },
     }),
     react(),
     tsconfigPaths(),
     tailwindcss(),
   ],
+  server: {
+    host: "::",
+    port: 5173,
+    hmr: {
+      overlay: false,
+    },
+  },
 });

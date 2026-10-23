@@ -1,3 +1,5 @@
+import { EventoAbbonamento } from "./catalog";
+
 export const BASE = import.meta.env["VITE_API_BASE_URL"] + "/api";
 
 const TOKEN_KEY = "areato.token";
@@ -64,7 +66,7 @@ const post = <T>(p: string, body?: unknown) =>
 const put = <T>(p: string, body?: unknown) =>
   request<T>(p, { method: "PUT", body: body === undefined ? undefined : JSON.stringify(body) });
 
-// ----------------------------------------------------------------- tipi ----
+// -----------------------------------------------------------------
 
 export type Ruolo = "ADMIN" | "TO";
 
@@ -77,6 +79,7 @@ export type UtenteDto = {
   tourOperatorNome?: string;
   lingua: string;
   loginTemporaneo?: boolean;
+  indirizzo?: string;
 };
 
 export type PrezzoDto = { id: number; tipologia: string; importo: number };
@@ -100,17 +103,37 @@ export type GaraDto = {
 
 export type RigaRequest = { garaId: number; settoreId: string; prezzoId: number; quantita: number };
 
+// --------------------------------------------------------------- stati -----
+// Codici di [dbo].[StatiRichiesta]: unica fonte degli stati di opzioni e
+// prenotazioni. Le etichette mostrate all'utente arrivano dal backend.
+export type StatoCodice =
+  | "IN_VALIDAZIONE"
+  | "VALIDATA"
+  | "CONVERTITI_IN_PRENOTAZIONE"
+  | "RILASCIATA"
+  | "SALDATA"
+  | "CANCELLATA"
+  | "DA_SALDARE"
+  | "CONVERTITA";
+
+export type StatoRichiestaDto = {
+  id: number;
+  descrizioneIT: string;
+  descrizioneEN: string;
+  descrizioneDE: string;
+};
+
 export type OpzioneRigaDto = {
   id: number;
   garaId: number;
-  gara: string;
   settoreId: string;
-  settore: string;
   prezzoId: number;
-  tipologia: string;
   quantita: number;
-  quantitaConvertita: number;
+  /** Quantit� che il TO ha chiesto di convertire in prenotazione. */
+  quantitaDaConvertire: number;
   prezzoUnitario: number;
+  totale: number;
+  abbonamento: boolean;
 };
 
 export type OpzioneDto = {
@@ -118,14 +141,39 @@ export type OpzioneDto = {
   numero: string;
   tourOperatorId: number;
   tourOperatorNome: string;
-  stato: string;
+  /** FK verso [dbo].[StatiRichiesta]. */
+  idStato: number;
+  statoDescrizione: string;
   scadeIl: string;
-  totaleStimato: number;
   note?: string;
+  totaleStimato: number;
+  totaleCommissioni: number;
   creatoIl: string;
   validataIl?: string;
+  rifiutatoIl?: string;
+  convertitail?: string;
   pdfInviatoIl?: string;
   righe: OpzioneRigaDto[];
+};
+
+/** Payload di creazione/modifica di un'OPZIONE. */
+export type OpzioneUpsertRequest = {
+  id?: number;
+  tourOperatorId: number;
+  idStato?: number;
+  scadeIl?: string;
+  note?: string;
+  totaleCommissioni?: number;
+  righe: Array<{
+    id?: number;
+    garaId: number;
+    settoreId: string;
+    prezzoId: number;
+    quantita: number;
+    quantitaDaConvertire?: number;
+    prezzoUnitario?: number;
+    abbonamento: boolean;
+  }>;
 };
 
 export type SpettatoreDto = {
@@ -139,15 +187,17 @@ export type SpettatoreDto = {
 
 export type PrenotazioneRigaDto = {
   id: number;
+  /** Riga di opzione di origine, se la prenotazione deriva da una conversione. */
+  opzioneRigaId?: number;
   garaId: number;
-  gara: string;
   settoreId: string;
-  settore: string;
-  tipologia: string;
+  prezzoId: number;
   quantita: number;
   prezzoUnitario: number;
   scontoPercentuale: number;
   totale: number;
+  abbonamento: boolean;
+
   spettatori: SpettatoreDto[];
 };
 
@@ -157,20 +207,62 @@ export type PrenotazioneDto = {
   tourOperatorId: number;
   tourOperatorNome: string;
   opzioneId?: number;
-  stato: string;
+  idStato: number;
+  statoDescrizione: string;
   cliente?: string;
   noteTo?: string;
   imponibile: number;
   scontoQuantita: number;
   scontoPartner: number;
   totale: number;
+  totaleCommissioni: number;
   totalePagato: number;
   scadenzaPagamento?: string;
   creatoIl: string;
   confermataIl?: string;
+  annullataIl?: string;
   pdfInviatoIl?: string;
   righe: PrenotazioneRigaDto[];
-  ruolo: string;
+};
+
+/** Payload di creazione/modifica di una PRENOTAZIONE. */
+export type PrenotazioneUpsertRequest = {
+  id?: number;
+  tourOperatorId: number;
+  opzioneId?: number;
+  idStato?: number;
+  cliente?: string;
+  noteTo?: string;
+  totaleCommissioni?: number;
+  scadenzaPagamento?: string;
+  applicaScontoPartner: boolean;
+  righe: Array<{
+    id?: number;
+    opzioneRigaId?: number;
+    garaId: number;
+    settoreId: string;
+    prezzoId: number;
+    quantita: number;
+    prezzoUnitario?: number;
+    abbonamento: boolean;
+  }>;
+  role: string;
+};
+
+/** Conversione OPZIONE ? PRENOTAZIONE (totale o parziale). */
+export type ConversioneOpzioneRequest = {
+  tourOperatorId: number;
+  cliente?: string;
+  noteTo?: string;
+  applicaScontoPartner: boolean;
+  scadenzaPagamento?: string;
+  /** Per ogni riga la quantit� da confermare (= quantit� richiesta). */
+  righe: Array<{ opzioneRigaId: number; quantita: number }>;
+};
+
+export type ConversioneEsitoDto = {
+  prenotazione: PrenotazioneDto;
+  opzione: OpzioneDto;
 };
 
 export type TourOperatorDto = {
@@ -214,6 +306,8 @@ export type AuditDto = {
   creatoIl: string;
   utente?: string;
   tourOperator?: string;
+  tourOperatorId?: number;
+  utenteId?: number;
   entita: string;
   entitaId?: string;
   azione: string;
@@ -221,8 +315,46 @@ export type AuditDto = {
   ip?: string;
 };
 
-// ---- endpoint ----
+export type AggiornaTariffaRigaItem = {
+  rigaId: number;
+  garaId: number;
+  settoreId: string;
+  prezzoId: number;
+};
 
+export type AggiornaTariffaRequest = {
+  tourOperatorId: number;
+  garaId: number;
+  settoreId: string;
+  prezzoId: number;
+};
+// ---- endpoint ----
+export type UtenteDta = {
+  id: number;
+  email: string;
+  creatoIl: string;
+  iban?: string | null;
+  indirizzo?: string | null;
+  swift?: string | null;
+  scadenzaOpzioni?: string | null;
+  bank?: string | null;
+  emailPrezzo: number | null;
+  servizioPrezzo: number | null;
+};
+
+export type AggiornaUtenteRequest = {
+  email?: string;
+  iban?: string | null;
+  indirizzo?: string | null;
+  swift?: string | null;
+  scadenzaOpzioni?: number | null;
+  bank?: string | null;
+};
+
+export type AggiornaQuantitaRigaRequest = {
+  tourOperatorId: number;
+  quantita: number;
+};
 export const api = {
   login: async (identifier: string, password: string, ruolo: "TO" | "ADMIN") => {
     const r = await post<{ token: string; scadeIl: string; utente: UtenteDto }>("/auth/login", {
@@ -241,32 +373,67 @@ export const api = {
     post<void>("/auth/set-password", { Id: id, password }),
 
   // Catalogo
-
   gare: (lang = "it") => get<GaraDto[]>(`/catalogo/gare?lang=${lang}`),
   syncCatalogo: () => post<unknown>("/catalogo/sync"),
+  // --- Cambio tariffa su singola RIGA (opzione o prenotazione) ---
+  // Il backend valida che settoreId/prezzoId appartengano alla garaId indicata.
+
+  aggiornaTariffaRigaOpzione: (opzioneId: number, rigaId: number, body: AggiornaTariffaRequest) =>
+    put<OpzioneDto>(`/opzioni/${opzioneId}/righe/${rigaId}/tariffa`, body),
+
+  aggiornaTariffaRigaPrenotazione: (
+    prenotazioneId: number,
+    rigaId: number,
+    body: AggiornaTariffaRequest,
+  ) => put<PrenotazioneDto>(`/prenotazioni/${prenotazioneId}/righe/${rigaId}/tariffa`, body),
 
   catalogoSp: {
     gare: (garaId?: number) =>
       get<import("./catalog").Gara[]>(`/gare${garaId ? `?garaId=${garaId}` : ""}`),
-    settori: (garaId?: number) =>
-      get<import("./catalog").Settore[]>(`/settori${garaId ? `?garaId=${garaId}` : ""}`),
-    prezzi: (garaId?: number, settoreId?: string) => {
+    settori: (garaId?: number, soloAttive?: boolean) => {
       const q = new URLSearchParams();
       if (garaId) q.set("garaId", String(garaId));
+      // Admin area: passare esplicitamente `false` per includere settori non attivi.
+      // Default: parametro omesso → comportamento attuale del backend.
+      if (soloAttive !== undefined) q.set("soloAttive", String(soloAttive));
+      const s = q.toString();
+      return get<import("./catalog").Settore[]>(`/settori${s ? `?${s}` : ""}`);
+    },
+    prezzi: (garaId?: number, settoreId?: string, soloAttive?: boolean) => {
+      const q = new URLSearchParams();
+      if (garaId) q.set("garaId", String(garaId));
+      if (soloAttive !== undefined) q.set("soloAttive", String(soloAttive));
       if (settoreId) q.set("settoreId", settoreId);
       const s = q.toString();
       return get<import("./catalog").Prezzo[]>(`/prezzi${s ? `?${s}` : ""}`);
     },
+    eventiAbbonamento: (garaId: number) =>
+      get<EventoAbbonamento[]>(`/abbonamenti/eventi?garaId=${garaId}`),
+    eventiAbbonamentoAll: (garaId: number) => get<EventoAbbonamento[]>(`/abbonamenti/eventi`),
     completo: () => get<import("./catalog").GaraCatalogo[]>("/catalogo/completo"),
     refresh: () => post<unknown>("/catalogo/refresh"),
   },
 
+  // Stati di opzioni e prenotazioni (tabella dbo.StatiRichiesta)
+  statiRichiesta: () => get<StatoRichiestaDto[]>("/stati-richiesta"),
+
   // Opzioni
-  opzioni: (params: { toId?: number; stato?: string } = {}) =>
-    get<OpzioneDto[]>(`/opzioni?${new URLSearchParams(clean(params))}`),
-  opzione: (id: number) => get<OpzioneDto>(`/opzioni/${id}`),
-  creaOpzione: (body: { tourOperatorId?: number; note?: string; righe: RigaRequest[] }) =>
-    post<OpzioneDto>("/opzioni", body),
+  opzioni: (
+    params: {
+      role?: string;
+      tourOperatorId?: number;
+      toId?: number;
+      idStato?: number;
+      lang?: string;
+    } = {},
+  ) => get<OpzioneDto[]>(`/opzioni?${new URLSearchParams(clean(params))}`),
+  opzione: (id: number, params: { role?: string; tourOperatorId?: number; lang?: string } = {}) =>
+    get<OpzioneDto>(`/opzioni/${id}?${new URLSearchParams(clean(params))}`),
+  creaOpzione: (body: OpzioneUpsertRequest) => post<OpzioneDto>("/opzioni", body),
+  aggiornaOpzione: (id: number, body: OpzioneUpsertRequest) =>
+    put<OpzioneDto>(`/opzioni/${id}`, body),
+  /** Cambio stato tramite codice di dbo.StatiRichiesta. */
+  cambiaStatoOpzione: (id: number) => post<OpzioneDto>(`/opzioni/${id}/stato`),
   validaOpzione: (id: number, inviaEmail = true) =>
     post<OpzioneDto>(`/opzioni/${id}/valida?inviaEmail=${inviaEmail}`),
   rifiutaOpzione: (id: number, motivo: string) => post<void>(`/opzioni/${id}/rifiuta`, motivo),
@@ -277,30 +444,27 @@ export const api = {
     post<{ accodate: number }>("/opzioni/avvisi-scadenza", { ids, messaggioAggiuntivo }),
 
   // Prenotazioni
-  prenotazioni: (params: { role: string; tourOperatorId: number; toId?: number; stato?: string }) =>
-    get<PrenotazioneDto[]>(`/prenotazioni?${new URLSearchParams(clean(params))}`),
-  prenotazione: (id: number) => get<PrenotazioneDto>(`/prenotazioni/${id}`),
+  prenotazioni: (params: {
+    role: string;
+    tourOperatorId: number;
+    toId?: number;
+    idStato?: number;
+    lang?: string;
+  }) => get<PrenotazioneDto[]>(`/prenotazioni?${new URLSearchParams(clean(params))}`),
+  prenotazione: (
+    id: number,
+    params: { role?: string; tourOperatorId?: number; lang?: string } = {},
+  ) => get<PrenotazioneDto>(`/prenotazioni/${id}?${new URLSearchParams(clean(params))}`),
 
-  creaPrenotazione: (body: {
-    tourOperatorId?: number;
-    cliente?: string;
-    noteTo?: string;
-    applicaScontoPartner: boolean;
-    righe: RigaRequest[];
-    role: string; // NEW
-    userId?: number; // NEW
-    ruolo: string; // NEW
-  }) => post<PrenotazioneDto>("/prenotazioni", body),
+  creaPrenotazione: (body: PrenotazioneUpsertRequest) =>
+    post<PrenotazioneDto>("/prenotazioni", body),
+  aggiornaPrenotazione: (id: number, body: PrenotazioneUpsertRequest) =>
+    put<PrenotazioneDto>(`/prenotazioni/${id}`, body),
+  cambiaStatoPrenotazione: (id: number, idStato: number, idTourOperator: number) =>
+    put<PrenotazioneDto>(`/prenotazioni/${id}/stato`, { id, idStato, idTourOperator }),
 
-  convertiOpzione: (
-    opzioneId: number,
-    body: {
-      cliente?: string;
-      noteTo?: string;
-      applicaScontoPartner: boolean;
-      righe: { opzioneRigaId: number; quantita: number }[];
-    },
-  ) => post<PrenotazioneDto>(`/prenotazioni/da-opzione/${opzioneId}`, body),
+  convertiOpzione: (opzioneId: number, body: ConversioneOpzioneRequest) =>
+    post<ConversioneEsitoDto>(`/opzioni/${opzioneId}/converti`, body),
   confermaPrenotazione: (
     id: number,
     role: string,
@@ -360,8 +524,13 @@ export const api = {
     get<RiepilogoRigaDto[]>(`/admin/riepilogo${toId ? `?toId=${toId}` : ""}`),
   riepilogoExcelUrl: (toId?: number) =>
     `${BASE}/admin/riepilogo/excel${toId ? `?toId=${toId}` : ""}`,
-  audit: (params: { toId?: number; entita?: string } = {}) =>
-    get<AuditDto[]>(`/admin/audit?${new URLSearchParams(clean(params))}`),
+  audit: (toId?: number, userId?: number) => {
+    const params = new URLSearchParams();
+    if (toId) params.set("toId", String(toId));
+    if (userId) params.set("userId", String(userId));
+    return get<AuditDto[]>(`/auth/audit?${params.toString()}`);
+  },
+  postAudit: (body: { UtenteId: string }) => post<{ message: string }>(`/`, body),
   inviaCodaEmail: () => post<{ inviate: number }>("/admin/email/invia"),
   getTraduzioni: async (lang: string): Promise<{ lingua: string; traduzioni: Dict }> => {
     return get<{ lingua: string; traduzioni: Dict }>(`/i18n/traduzioni?lang=${lang}`);
@@ -373,6 +542,40 @@ export const api = {
     post<{ message: string }>("/email/send-invitation", { tourOperatoreId }),
   sendEmailForResetPassword: (email: string) =>
     post<{ message: string }>("/email/emailresetpassword", { email }),
+
+  getExpireDate: () => get<string>("/catalogo/expire-date"),
+  convertiOpzioni: (body: OpzioneDto[]) => post<ConversioneEsitoDto[]>("/opzioni/converti", body),
+
+  // --- NEW: minimal state updates (used by Admin → Validations) ---
+  aggiornaStatoOpzione: (id: number, idStato: number, idTourOperator: number, utenteId: number) =>
+    put<OpzioneDto>(`/opzioni/${id}`, { id, idStato, idTourOperator, utenteId }),
+  aggiornaStatoPrenotazione: (
+    id: number,
+    idStato: number,
+    idTourOperator: number,
+    utenteId: number,
+  ) => put<PrenotazioneDto>(`/prenotazioni/${id}`, { id, idStato, idTourOperator, utenteId }),
+
+  utenti: () => get<UtenteDta[]>("/admin/utenti"),
+  utente: (id: number) => get<UtenteDta>(`/admin/utenti/${id}`),
+  aggiornaUtente: (id: number, body: AggiornaUtenteRequest) =>
+    put<UtenteDta>(`/admin/utenti/${id}`, body),
+
+  // inside `api` object, next to aggiornaTariffaRigaOpzione:
+  aggiornaQuantitaRigaOpzione: (
+    opzioneId: number,
+    rigaId: number,
+    body: AggiornaQuantitaRigaRequest,
+  ) => put<OpzioneDto>(`/opzioni/${opzioneId}/righe/${rigaId}/quantita`, body),
+
+  aggiornaQuantitaRigaPrenotazione: (
+    prenotazioneId: number,
+    rigaId: number,
+    body: AggiornaQuantitaRigaRequest,
+  ) => put<PrenotazioneDto>(`/prenotazioni/${prenotazioneId}/righe/${rigaId}/quantita`, body),
+
+  uploadPrenotazionePdf: (id: number, base64: string) =>
+    post<{ message: string }>(`/prenotazioni/${id}/pdf`, { base64 }),
 };
 
 function clean(o: Record<string, unknown>): Record<string, string> {

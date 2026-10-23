@@ -18,6 +18,7 @@ import { Route as AppCartRouteImport } from './routes/_app.cart'
 import { Route as AppOptionsRouteImport } from './routes/_app.options'
 import { Route as AppRacesRouteImport } from './routes/_app.races'
 import { Route as AppSalesRouteImport } from './routes/_app.sales'
+import { Route as AppAdminGeneralRouteImport } from './routes/_app.admin.general'
 import { Route as AppAdminOperatorsRouteImport } from './routes/_app.admin.operators'
 import { Route as AppAdminPaymentsRouteImport } from './routes/_app.admin.payments'
 import { Route as AppAdminSummaryRouteImport } from './routes/_app.admin.summary'
@@ -67,6 +68,11 @@ const AppSalesRoute = AppSalesRouteImport.update({
   path: '/sales',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAdminGeneralRoute = AppAdminGeneralRouteImport.update({
+  id: '/admin/general',
+  path: '/admin/general',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAdminOperatorsRoute = AppAdminOperatorsRouteImport.update({
   id: '/admin/operators',
   path: '/admin/operators',
@@ -97,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/options': typeof AppOptionsRoute
   '/races': typeof AppRacesRoute
   '/sales': typeof AppSalesRoute
+  '/admin/general': typeof AppAdminGeneralRoute
   '/admin/operators': typeof AppAdminOperatorsRoute
   '/admin/payments': typeof AppAdminPaymentsRoute
   '/admin/summary': typeof AppAdminSummaryRoute
@@ -111,6 +118,7 @@ export interface FileRoutesByTo {
   '/races': typeof AppRacesRoute
   '/sales': typeof AppSalesRoute
   '/': typeof AppIndexRoute
+  '/admin/general': typeof AppAdminGeneralRoute
   '/admin/operators': typeof AppAdminOperatorsRoute
   '/admin/payments': typeof AppAdminPaymentsRoute
   '/admin/summary': typeof AppAdminSummaryRoute
@@ -127,6 +135,7 @@ export interface FileRoutesById {
   '/_app/races': typeof AppRacesRoute
   '/_app/sales': typeof AppSalesRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/admin/general': typeof AppAdminGeneralRoute
   '/_app/admin/operators': typeof AppAdminOperatorsRoute
   '/_app/admin/payments': typeof AppAdminPaymentsRoute
   '/_app/admin/summary': typeof AppAdminSummaryRoute
@@ -143,6 +152,7 @@ export interface FileRouteTypes {
     | '/options'
     | '/races'
     | '/sales'
+    | '/admin/general'
     | '/admin/operators'
     | '/admin/payments'
     | '/admin/summary'
@@ -157,6 +167,7 @@ export interface FileRouteTypes {
     | '/races'
     | '/sales'
     | '/'
+    | '/admin/general'
     | '/admin/operators'
     | '/admin/payments'
     | '/admin/summary'
@@ -172,6 +183,7 @@ export interface FileRouteTypes {
     | '/_app/races'
     | '/_app/sales'
     | '/_app/'
+    | '/_app/admin/general'
     | '/_app/admin/operators'
     | '/_app/admin/payments'
     | '/_app/admin/summary'
@@ -248,6 +260,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSalesRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/admin/general': {
+      id: '/_app/admin/general'
+      path: '/admin/general'
+      fullPath: '/admin/general'
+      preLoaderRoute: typeof AppAdminGeneralRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/admin/operators': {
       id: '/_app/admin/operators'
       path: '/admin/operators'
@@ -287,6 +306,7 @@ interface AppRouteChildren {
   AppRacesRoute: typeof AppRacesRoute
   AppSalesRoute: typeof AppSalesRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppAdminGeneralRoute: typeof AppAdminGeneralRoute
   AppAdminOperatorsRoute: typeof AppAdminOperatorsRoute
   AppAdminPaymentsRoute: typeof AppAdminPaymentsRoute
   AppAdminSummaryRoute: typeof AppAdminSummaryRoute
@@ -301,6 +321,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppRacesRoute: AppRacesRoute,
   AppSalesRoute: AppSalesRoute,
   AppIndexRoute: AppIndexRoute,
+  AppAdminGeneralRoute: AppAdminGeneralRoute,
   AppAdminOperatorsRoute: AppAdminOperatorsRoute,
   AppAdminPaymentsRoute: AppAdminPaymentsRoute,
   AppAdminSummaryRoute: AppAdminSummaryRoute,

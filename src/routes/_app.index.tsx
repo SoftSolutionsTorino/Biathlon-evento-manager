@@ -2,19 +2,15 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Clock,
   ClipboardList,
-  Ticket,
   TrendingUp,
   AlertTriangle,
-  Wallet,
   CalendarDays,
   BadgeCheck,
-  Users,
 } from "lucide-react";
 import { useToStore, fmtEur, daysUntil } from "@/lib/toStore";
 import { useI18n, useFormatters } from "@/lib/i18n";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 
 export const Route = createFileRoute("/_app/")({
   component: Dashboard,
@@ -75,17 +71,16 @@ function Dashboard() {
   const { fmtDate } = useFormatters();
 
   const to = tourOperators.find((x) => x.id === currentToId)!;
-  const activeOptions = options.filter((o) => o.status === "active");
+  const activeOptions = options.filter((o) => o.statoId === 2);
   const expiringSoon = activeOptions.filter((o) => daysUntil(o.expiresAt) <= 2);
-  const openBookings = bookings.filter((b) => b.status !== "issued" && b.status !== "cancelled");
+  const openBookings = bookings.filter((b) => b.statoId !== 6 && b.statoId !== 7);
   const issuedQty = sales.reduce((s, x) => s + x.qty, 0);
   const plafondPct = Math.round((to?.used / to?.plafond) * 100);
 
-  const pendingCount = allOptions.filter((o) => o.status === "pending").length;
+  const pendingCount = allOptions.filter((o) => o.statoId === 1).length;
   const enabledCount = tourOperators.filter((o) => o.enabled).length;
   const globalRevenue = allSales.reduce((s, x) => s + x.total, 0);
 
-  console.log(user);
   return (
     <div className="space-y-6">
       <div>
@@ -143,7 +138,7 @@ function Dashboard() {
               })}
               tone="warning"
             />
-            <KpiCard
+            {/* <KpiCard
               label={t("dash.kpi.issued")}
               value={String(issuedQty)}
               icon={Ticket}
@@ -155,7 +150,7 @@ function Dashboard() {
               value={fmtEur(to?.used)}
               icon={Wallet}
               hint={t("dash.kpi.plafond.hint", { total: fmtEur(to?.plafond), pct: plafondPct })}
-            />
+            /> */}
           </>
         )}
       </div>
@@ -232,9 +227,10 @@ function Dashboard() {
               <div key={r.id} className="flex items-center justify-between rounded-md border p-3">
                 <div>
                   <div className="text-sm font-medium">{r.name}</div>
-                  <div className="text-xs text-muted-foreground">{fmtDate(r.date)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {fmtDate(r.date || new Date().toISOString())}
+                  </div>
                 </div>
-                <Badge variant="outline">{r.discipline}</Badge>
               </div>
             ))}
           </div>

@@ -22,7 +22,6 @@ export function AdminOnly({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-/** Banner "sola lettura" per l'Admin nelle pagine operative del Tour Operator. */
 export function ReadOnlyNotice() {
   const { isAdmin } = useToStore();
   const { t } = useI18n();

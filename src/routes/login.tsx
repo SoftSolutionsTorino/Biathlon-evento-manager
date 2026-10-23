@@ -9,6 +9,7 @@ import { I18nProvider, useI18n, LANGS } from "@/lib/i18n";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api";
 import { useToStore } from "@/lib/toStore";
+import biathlonLogo from "./../../biathlonlogo.png";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
@@ -174,9 +175,11 @@ function LoginPage() {
           </div>
 
           <div className="flex flex-col items-center text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-              <Snowflake className="h-7 w-7" />
-            </div>
+              <img
+                src={biathlonLogo}
+                alt="Biathlon Logo Ufficiale"
+                className="h-12 w-auto max-w-full object-contain"
+              />
             <h1 className="mt-4 text-xl font-semibold">
               {showChangePassword ? t("login.temp_password.title") : t("app.title")}
             </h1>
@@ -185,7 +188,6 @@ function LoginPage() {
             </p>
           </div>
 
-          {/* ---- CHANGE PASSWORD FORM ---- */}
           {showChangePassword && (
             <form className="space-y-4" onSubmit={handleSetPassword}>
               <div className="space-y-2">

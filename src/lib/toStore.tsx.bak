@@ -1,0 +1,1177 @@
+/**
+ * Store dell'Area Riservata Tour Operator.
+ * ----------------------------------------------------------------
+ * Stato centralizzato per l'applicazione. Gestisce autenticazione,
+ * dati del catalogo, opzioni, prenotazioni, vendite, audit log.
+ *
+ * Ruoli:
+ *   - "admin": visualizza e opera su tutti i Tour Operator;
+ *   - "to":    visualizza e opera solo sui propri dati.
+ */
+import * as React from "react";
+import { toast } from "sonner";
+import { api, UtenteDto, ApiError, type RigaRequest } from "@/lib/api";
+import { loadGare, prefetchDettaglioGara, nomeGara, type SettoreCatalogo } from "@/lib/catalog";
+
+export const OPTION_EXPIRY_ISO = "2026-10-19T23:59:59.000Z";
+
+// ----- Persistenza carrello in sessionStorage (per utente) -----
+const cartKey = (userId: number | string | undefined) => `areato.cart.${userId ?? "anon"}`;
+
+function readCartFromSession(userId: number | string | undefined): CartItem[] {
+  if (typeof window === "undefined" || !userId) return [];
+  try {
+    const raw = window.sessionStorage.getItem(cartKey(userId));
+    return raw ? (JSON.parse(raw) as CartItem[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCartToSession(userId: number | string | undefined, cart: CartItem[]) {
+  if (typeof window === "undefined" || !userId) return;
+  try {
+    window.sessionStorage.setItem(cartKey(userId), JSON.stringify(cart));
+  } catch {
+    /* quota / privacy mode: ignora */
+  }
+}
+
+function removeCartFromSession(userId: number | string | undefined) {
+  if (typeof window === "undefined" || !userId) return;
+  window.sessionStorage.removeItem(cartKey(userId));
+}
+// ----- Tipi -----
+export type Role = "admin" | "to";
+export type RaceCode =
+  | "SPRINT_M"
+  | "SPRINT_W"
+  | "PURSUIT_M"
+  | "PURSUIT_W"
+  | "INDIVIDUAL_M"
+  | "INDIVIDUAL_W"
+  | "MASSSTART_M"
+  | "MASSSTART_W"
+  | "RELAY_M"
+  | "RELAY_W"
+  | "MIXED_RELAY";
+
+export type Race = {
+  id: string;
+  code: RaceCode;
+  name: string;
+  date: string | null;
+  discipline: string;
+};
+
+export type Sector = {
+  id: string;
+  raceId: string;
+  name: string;
+  capacity: number;
+  sold: number;
+  priceTo: number;
+  numbered: boolean;
+  priceCategory: "INTERO" | "RIDOTTO" | "ABBONAMENTO";
+};
+
+export type OptionStatus = "pending" | "active" | "expired" | "released" | "converted" | "rejected";
+export type BookingStatus = "pending_payment" | "partially_paid" | "paid" | "cancelled" | "issued";
+
+export type TicketOption = {
+  id: string;
+  toId: string;
+  raceId: string;
+  sectorId: string;
+  qty: number;
+  createdAt: string;
+  expiresAt: string;
+  status: OptionStatus;
+  note?: string;
+  pdfSent?: boolean;
+};
+
+export type Booking = {
+  id: string;
+  fromOptionId?: string;
+  toId: string;
+  raceId: string;
+  sectorId: string;
+  qty: number;
+  total: number;
+  deposit: number;
+  paid: number;
+  paymentDueAt: string;
+  customer: string;
+  status: BookingStatus;
+  createdAt: string;
+};
+
+export type Sale = {
+  id: string;
+  bookingId: string;
+  toId: string;
+  voucherCode: string;
+  qty: number;
+  total: number;
+  issuedAt: string;
+  customer: string;
+  raceId: string;
+  sectorId: string;
+};
+
+export type AuditEntry = {
+  id: string;
+  at: string;
+  user: string;
+  ip: string;
+  entity: "option" | "booking" | "sale" | "auth" | "operator";
+  entityId: string;
+  action: string;
+  details?: string;
+};
+
+export type TourOperator = {
+  id: string;
+  name: string;
+  type: "TO" | "FanClub";
+  email: string;
+  plafond: number;
+  used: number;
+  enabled: boolean;
+  partnerDiscount: number;
+  company?: string;
+};
+
+// ----- Dati demo (mock per opzioni/prenotazioni/vendite/audit) -----
+const seeded = (seed: number, max: number) =>
+  Math.floor(((((Math.sin(seed * 12.9898) * 43758.5453) % 1) + 1) % 1) * max);
+
+const today = new Date();
+const inDays = (d: number) => new Date(today.getTime() + d * 86400000).toISOString();
+const ago = (d: number) => new Date(today.getTime() - d * 86400000).toISOString();
+
+const OPTIONS: TicketOption[] = [
+  {
+    id: "o1",
+    toId: "to1",
+    raceId: "r2",
+    sectorId: "r2-B",
+    qty: 24,
+    createdAt: ago(2),
+    expiresAt: inDays(5),
+    status: "active",
+    note: "Gruppo Monaco di Baviera",
+    pdfSent: true,
+  },
+  {
+    id: "o2",
+    toId: "to1",
+    raceId: "r4",
+    sectorId: "r4-B",
+    qty: 40,
+    createdAt: ago(1),
+    expiresAt: inDays(6),
+    status: "pending",
+  },
+  {
+    id: "o3",
+    toId: "to1",
+    raceId: "r8",
+    sectorId: "r8-C",
+    qty: 12,
+    createdAt: ago(8),
+    expiresAt: inDays(1),
+    status: "active",
+    note: "Scadenza imminente",
+    pdfSent: true,
+  },
+  {
+    id: "o4",
+    toId: "to1",
+    raceId: "r1",
+    sectorId: "r1-C",
+    qty: 60,
+    createdAt: ago(15),
+    expiresAt: ago(2),
+    status: "expired",
+  },
+  {
+    id: "o5",
+    toId: "to1",
+    raceId: "r6",
+    sectorId: "r6-C",
+    qty: 80,
+    createdAt: ago(10),
+    expiresAt: ago(3),
+    status: "converted",
+  },
+  {
+    id: "o6",
+    toId: "to2",
+    raceId: "r3",
+    sectorId: "r3-C",
+    qty: 120,
+    createdAt: ago(1),
+    expiresAt: inDays(6),
+    status: "pending",
+    note: "Pullman da Bolzano",
+  },
+  {
+    id: "o7",
+    toId: "to2",
+    raceId: "r7",
+    sectorId: "r7-B",
+    qty: 35,
+    createdAt: ago(4),
+    expiresAt: inDays(3),
+    status: "active",
+    pdfSent: true,
+  },
+  {
+    id: "o8",
+    toId: "to3",
+    raceId: "r5",
+    sectorId: "r5-C",
+    qty: 50,
+    createdAt: ago(0.5),
+    expiresAt: inDays(7),
+    status: "pending",
+    note: "Fan club — settore in piedi",
+  },
+];
+
+const SALES: Sale[] = [
+  {
+    id: "s1",
+    bookingId: "b-old-1",
+    toId: "to1",
+    voucherCode: "ANT27-7H3K-9MX2",
+    qty: 50,
+    total: 50 * 95,
+    issuedAt: ago(7),
+    customer: "Finnish Biathlon Tours",
+    raceId: "r2",
+    sectorId: "r2-A",
+  },
+  {
+    id: "s2",
+    bookingId: "b-old-2",
+    toId: "to1",
+    voucherCode: "ANT27-A2P8-LL11",
+    qty: 22,
+    total: 22 * 75,
+    issuedAt: ago(4),
+    customer: "Czech Wax Travel",
+    raceId: "r4",
+    sectorId: "r4-B",
+  },
+  {
+    id: "s3",
+    bookingId: "b-old-3",
+    toId: "to2",
+    voucherCode: "ANT27-QQ41-77ZA",
+    qty: 64,
+    total: 64 * 35,
+    issuedAt: ago(5),
+    customer: "Südtirol Sport Travel — gruppo A",
+    raceId: "r6",
+    sectorId: "r6-C",
+  },
+];
+
+const AUDIT: AuditEntry[] = [
+  {
+    id: "a1",
+    at: ago(0.01),
+    user: "mario.rossi@alpinetours.de",
+    ip: "82.150.10.4",
+    entity: "auth",
+    entityId: "-",
+    action: "Login SSO",
+    details: "JWT exchange OK",
+  },
+  {
+    id: "a2",
+    at: ago(0.05),
+    user: "mario.rossi@alpinetours.de",
+    ip: "82.150.10.4",
+    entity: "option",
+    entityId: "o2",
+    action: "Richiesta opzione",
+    details: "40 posti — Pursuit M, Tribuna B",
+  },
+  {
+    id: "a3",
+    at: ago(0.2),
+    user: "admin@biathlon-antholz.it",
+    ip: "10.0.0.9",
+    entity: "option",
+    entityId: "o1",
+    action: "Validazione opzione",
+    details: "PDF Optionsformular inviato",
+  },
+  {
+    id: "a4",
+    at: ago(1.1),
+    user: "admin@biathlon-antholz.it",
+    ip: "10.0.0.9",
+    entity: "sale",
+    entityId: "s2",
+    action: "Emissione titoli",
+    details: "Voucher ANT27-A2P8-LL11",
+  },
+];
+
+// ----- Store -----
+type State = {
+  user: UtenteDto | null;
+  selectedToId: string | null;
+  tourOperators: TourOperator[];
+  tourOperatorsByName: TourOperator[];
+  races: Race[];
+  sectors: Sector[];
+  options: TicketOption[];
+  bookings: Booking[];
+  sales: Sale[];
+  audit: AuditEntry[];
+  cart: CartItem[];
+  currentToId: string | null;
+  optionExpiry: string;
+};
+
+export type CartItem = {
+  id: string;
+  raceId: string;
+  sectorId: string;
+  prezzoId: number; // <-- NUOVO
+
+  qty: number;
+  note?: string;
+};
+
+type Ctx = Omit<State, "options" | "bookings" | "sales"> & {
+  options: TicketOption[];
+  bookings: Booking[];
+  sales: Sale[];
+  allOptions: TicketOption[];
+  allBookings: Booking[];
+  allSales: Sale[];
+  isAdmin: boolean;
+  currentToId: string | null;
+  currentUserEmail: string;
+  setUser: (u: UtenteDto) => void;
+  logout: () => void;
+  setSelectedTo: (id: string) => void;
+  createOption: (input: {
+    raceId: string;
+    sectorId: string;
+    qty: number;
+    ttlDays: number;
+    note?: string;
+  }) => void;
+  releaseOption: (id: string) => void;
+  validateOption: (id: string) => void;
+  rejectOption: (id: string) => void;
+  sendOptionPdf: (id: string) => void;
+  sendExpiryAlerts: (ids: string[]) => void;
+  convertOptionToBooking: (id: string, customer: string, depositPct: number) => void;
+  createDirectBooking: (input: {
+    raceId: string;
+    sectorId: string;
+    qty: number;
+    customer: string;
+    note?: string;
+  }) => void;
+  submitCart: (input: { kind: "option" | "booking"; note?: string }) => Promise<number>;
+  registerPayment: (bookingId: string, amount: number) => void;
+  convertBookingToSale: (bookingId: string) => void;
+  cancelBooking: (id: string) => void;
+  toggleOperatorEnabled: (id: string) => void;
+  setPartnerDiscount: (id: string, pct: number) => void;
+  sendInvite: (id: string) => void;
+  getTourOperatorsByName: (name: string) => void;
+  sendEmailForResetPassword: (email: string) => void;
+  addToCart: (input: {
+    raceId: string;
+    sectorId: string;
+    qty: number;
+    note?: string;
+    prezzoId: number;
+  }) => void;
+  updateCartItem: (id: string, patch: Partial<Omit<CartItem, "id">>) => void;
+  removeCartItem: (id: string) => void;
+  clearCart: () => void;
+  /** Registra (o aggiorna) i settori reali di una gara nello store. */
+  registerSectors: (garaId: number, settori: SettoreCatalogo[]) => void;
+  refreshBookings: () => void;
+};
+
+const StoreContext = React.createContext<Ctx | null>(null);
+
+const ADMIN_IP = "10.0.0.9";
+const TO_IP = "82.150.10.4";
+
+export function ToStoreProvider({ children }: { children: React.ReactNode }) {
+  const [state, setState] = React.useState<State>({
+    user: null,
+    selectedToId: null,
+    currentToId: "to1",
+    tourOperators: [],
+    tourOperatorsByName: [],
+    races: [],
+    sectors: [],
+    options: OPTIONS,
+    bookings: [],
+    sales: SALES,
+    audit: AUDIT,
+    cart: [],
+    optionExpiry: OPTION_EXPIRY_ISO,
+  });
+
+  // Computed values
+  const isAdmin = state.user?.ruolo === "ADMIN";
+  const currentTo = state.tourOperators.find((t) => t.id === state.currentToId)!;
+
+  const currentToId = isAdmin
+    ? state.selectedToId
+    : (state.user?.tourOperatorId?.toString() ?? null);
+
+  // Filtra i dati in base al TO corrente (se definito)
+  const scoped = <T extends { toId: string }>(rows: T[]) => {
+    if (!currentToId) return rows;
+    return rows.filter((r) => r.toId === currentToId);
+  };
+
+  // Utilità per audit log
+  const log = (entry: Omit<AuditEntry, "id" | "at" | "user" | "ip">) => {
+    setState((s) => {
+      const userEmail = s.user?.email ?? "sconosciuto";
+      const ip = isAdmin ? ADMIN_IP : TO_IP;
+      return {
+        ...s,
+        audit: [
+          {
+            id: `a${Math.random().toString(36).slice(2, 8)}`,
+            at: new Date().toISOString(),
+            user: userEmail,
+            ip,
+            ...entry,
+          },
+          ...s.audit,
+        ],
+      };
+    });
+  };
+
+  // ----- Azioni di autenticazione e stato -----
+  const setUser = (u: UtenteDto) => {
+    setState((s) => ({
+      ...s,
+      user: u,
+      selectedToId: u.ruolo === "ADMIN" ? s.selectedToId : null,
+    }));
+    if (typeof window !== "undefined") {
+      try {
+        const saved = window.localStorage.getItem("areato.session");
+        const parsed = saved ? JSON.parse(saved) : {};
+        window.localStorage.setItem(
+          "areato.session",
+          JSON.stringify({
+            ...parsed,
+            user: u,
+            selectedToId: u.ruolo === "ADMIN" ? state.selectedToId : undefined,
+          }),
+        );
+      } catch {
+        /* ignorato */
+      }
+    }
+  };
+
+  const logout = () => {
+    removeCartFromSession(state.user?.id);
+
+    setState((s) => ({ ...s, user: null, selectedToId: null, cart: [] }));
+    cartHydratedFor.current = undefined;
+
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("areato.session");
+    }
+    api.logout();
+  };
+  const setSelectedTo = (id: string) => {
+    if (!isAdmin) return;
+    setState((s) => ({ ...s, selectedToId: id }));
+    if (typeof window !== "undefined") {
+      try {
+        const saved = window.localStorage.getItem("areato.session");
+        const parsed = saved ? JSON.parse(saved) : {};
+        window.localStorage.setItem(
+          "areato.session",
+          JSON.stringify({ ...parsed, selectedToId: id }),
+        );
+      } catch {}
+    }
+  };
+
+  const registerSectors = React.useCallback((garaId: number, settori: SettoreCatalogo[]) => {
+    const raceKey = String(garaId);
+    const mapped: Sector[] = settori.map((s) => {
+      const priceTo = s.prezzi.length ? Math.min(...s.prezzi.map((p) => p.importo)) : 0;
+      return {
+        id: `${garaId}-${s.id}`, // stesso formato di storeSectorId in races.tsx
+        raceId: raceKey,
+        name: s.nomeIt,
+        capacity: s.capienza,
+        sold: 0,
+        priceTo,
+        numbered: s.postiNumerati,
+        priceCategory: "INTERO",
+      };
+    });
+    setState((prev) => ({
+      ...prev,
+      sectors: [...prev.sectors.filter((x) => x.raceId !== raceKey), ...mapped],
+    }));
+  }, []);
+
+  // ----- Azioni sui dati (mock) -----
+  const createOption = ({ raceId, sectorId, qty, ttlDays, note }: any) => {
+    if (!currentToId) {
+      toast.error("Seleziona un Tour Operator per creare un'opzione.");
+      return;
+    }
+    const id = `o${Math.random().toString(36).slice(2, 7)}`;
+    setState((s) => ({
+      ...s,
+      options: [
+        {
+          id,
+          toId: currentToId,
+          raceId,
+          sectorId,
+          qty,
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + ttlDays * 86400000).toISOString(),
+          status: "pending",
+          note,
+        },
+        ...s.options,
+      ],
+    }));
+    log({
+      entity: "option",
+      entityId: id,
+      action: "Richiesta opzione",
+      details: `${qty} posti, scadenza ${ttlDays}gg`,
+    });
+  };
+
+  const releaseOption = (id: string) => {
+    setState((s) => ({
+      ...s,
+      options: s.options.map((o) => (o.id === id ? { ...o, status: "released" } : o)),
+    }));
+    log({ entity: "option", entityId: id, action: "Rilascio opzione" });
+  };
+
+  const validateOption = (id: string) => {
+    setState((s) => ({
+      ...s,
+      options: s.options.map((o) => (o.id === id ? { ...o, status: "active" } : o)),
+    }));
+    log({ entity: "option", entityId: id, action: "Validazione opzione" });
+  };
+
+  const rejectOption = (id: string) => {
+    setState((s) => ({
+      ...s,
+      options: s.options.map((o) => (o.id === id ? { ...o, status: "rejected" } : o)),
+    }));
+    log({ entity: "option", entityId: id, action: "Rifiuto richiesta opzione" });
+  };
+
+  const sendOptionPdf = (id: string) => {
+    setState((s) => ({
+      ...s,
+      options: s.options.map((o) => (o.id === id ? { ...o, pdfSent: true } : o)),
+    }));
+    log({ entity: "option", entityId: id, action: "Invio PDF Optionsformular" });
+  };
+
+  const sendExpiryAlerts = (ids: string[]) => {
+    log({
+      entity: "option",
+      entityId: ids.join(","),
+      action: "Invio avvisi di scadenza",
+      details: `${ids.length} opzioni`,
+    });
+  };
+
+  const convertOptionToBooking = (id: string, customer: string, depositPct: number) => {
+    const opt = state.options.find((o) => o.id === id);
+    if (!opt) return;
+    const sector = state.sectors.find((x) => x.id === opt.sectorId)!;
+    const total = opt.qty * sector.priceTo;
+    const deposit = Math.round(total * (depositPct / 100));
+    const bid = `b${Math.random().toString(36).slice(2, 7)}`;
+    setState((s) => ({
+      ...s,
+      options: s.options.map((o) => (o.id === id ? { ...o, status: "converted" } : o)),
+      bookings: [
+        {
+          id: bid,
+          fromOptionId: id,
+          toId: opt.toId,
+          raceId: opt.raceId,
+          sectorId: opt.sectorId,
+          qty: opt.qty,
+          total,
+          deposit,
+          paid: deposit,
+          paymentDueAt: new Date(Date.now() + 14 * 86400000).toISOString(),
+          customer,
+          status: deposit >= total ? "paid" : deposit > 0 ? "partially_paid" : "pending_payment",
+          createdAt: new Date().toISOString(),
+        },
+        ...s.bookings,
+      ],
+    }));
+    log({
+      entity: "booking",
+      entityId: bid,
+      action: "Conversione opzione → prenotazione",
+      details: `Cliente: ${customer}, acconto ${depositPct}%`,
+    });
+  };
+
+  const createDirectBooking = ({ raceId, sectorId, qty, customer, note }: any) => {
+    if (!currentToId) {
+      toast.error("Seleziona un Tour Operator per creare una prenotazione.");
+      return;
+    }
+    const sector = state.sectors.find((x) => x.id === sectorId)!;
+    const total = qty * sector.priceTo;
+    const bid = `b${Math.random().toString(36).slice(2, 7)}`;
+    setState((s) => ({
+      ...s,
+      bookings: [
+        {
+          id: bid,
+          toId: currentToId,
+          raceId,
+          sectorId,
+          qty,
+          total,
+          deposit: 0,
+          paid: 0,
+          paymentDueAt: new Date(Date.now() + 14 * 86400000).toISOString(),
+          customer,
+          status: "pending_payment",
+          createdAt: new Date().toISOString(),
+        },
+        ...s.bookings,
+      ],
+    }));
+    log({
+      entity: "booking",
+      entityId: bid,
+      action: "Richiesta prenotazione diretta",
+      details: `${qty} posti${note ? ` — ${note}` : ""}`,
+    });
+  };
+
+  const registerPayment = (bookingId: string, amount: number) => {
+    setState((s) => ({
+      ...s,
+      bookings: s.bookings.map((b) => {
+        if (b.id !== bookingId) return b;
+        const paid = b.paid + amount;
+        const status: BookingStatus =
+          paid >= b.total ? "paid" : paid > 0 ? "partially_paid" : b.status;
+        return { ...b, paid, status };
+      }),
+    }));
+    log({
+      entity: "booking",
+      entityId: bookingId,
+      action: "Registrazione pagamento",
+      details: `+ ${fmtEur(amount)}`,
+    });
+  };
+
+  const convertBookingToSale = (bookingId: string) => {
+    const b = state.bookings.find((x) => x.id === bookingId);
+    if (!b) return;
+    const voucher = `ANT27-${Math.random().toString(36).slice(2, 6).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const sid = `s${Math.random().toString(36).slice(2, 7)}`;
+    setState((s) => ({
+      ...s,
+      bookings: s.bookings.map((x) => (x.id === bookingId ? { ...x, status: "issued" } : x)),
+      sales: [
+        {
+          id: sid,
+          bookingId,
+          toId: b.toId,
+          voucherCode: voucher,
+          qty: b.qty,
+          total: b.total,
+          issuedAt: new Date().toISOString(),
+          customer: b.customer,
+          raceId: b.raceId,
+          sectorId: b.sectorId,
+        },
+        ...s.sales,
+      ],
+    }));
+    log({
+      entity: "sale",
+      entityId: sid,
+      action: "Emissione titoli di accesso",
+      details: `Voucher ${voucher}`,
+    });
+  };
+
+  const cancelBooking = (id: string) => {
+    setState((s) => ({
+      ...s,
+      bookings: s.bookings.map((b) => (b.id === id ? { ...b, status: "cancelled" } : b)),
+    }));
+    log({ entity: "booking", entityId: id, action: "Annullamento prenotazione" });
+  };
+
+  const toggleOperatorEnabled = async (id: string) => {
+    try {
+      await api.toggleAbilitato(Number(id));
+      setState((s) => ({
+        ...s,
+        tourOperators: s.tourOperators.map((t) =>
+          t.id === id ? { ...t, enabled: !t.enabled } : t,
+        ),
+      }));
+      log({ entity: "operator", entityId: id, action: "Modifica abilitazione area riservata" });
+      toast.success("Stato abilitazione aggiornato.");
+    } catch (error) {
+      console.error("Errore durante il toggle:", error);
+      toast.error("Impossibile aggiornare lo stato. Riprova.");
+      await fetchTourOperators();
+    }
+  };
+
+  const setPartnerDiscount = (id: string, pct: number) => {
+    setState((s) => ({
+      ...s,
+      tourOperators: s.tourOperators.map((t) => (t.id === id ? { ...t, partnerDiscount: pct } : t)),
+    }));
+    log({
+      entity: "operator",
+      entityId: id,
+      action: "Modifica sconto partner",
+      details: `${pct}%`,
+    });
+  };
+
+  const sendInvite = async (id: string) => {
+    const operatorId = parseInt(id, 10);
+    if (isNaN(operatorId) || operatorId <= 0) {
+      toast.error("ID operatore non valido");
+      return;
+    }
+    try {
+      await api.sendInvitationEmail(operatorId);
+      log({ entity: "operator", entityId: id, action: "Invio link impostazione email/password" });
+      toast.success("Invito inviato con successo!");
+    } catch (error) {
+      console.error("Errore durante l'invio dell'invito:", error);
+      const msg = error instanceof ApiError ? error.message : "Errore durante l'invio dell'email";
+      toast.error(msg);
+    }
+  };
+
+  async function fetchTourOperators() {
+    try {
+      const data = await api.tourOperators();
+      const mapped: TourOperator[] = data.map((dto) => ({
+        id: dto.id.toString(),
+        name: dto.ragioneSociale,
+        type: dto.tipo === "FanClub" ? "FanClub" : "TO",
+        email: dto.emailContatto || "",
+        plafond: dto.plafond ?? 0,
+        used: 0,
+        enabled: dto.abilitato,
+        partnerDiscount: dto.scontoPartner,
+        company: dto.azienda,
+      }));
+      setState((s) => ({ ...s, tourOperators: mapped }));
+    } catch (error) {
+      // silenzioso
+    }
+  }
+
+  // ✅ RISCRITTA: ora popola davvero `races`
+  async function fetchGare() {
+    try {
+      const data = await loadGare();
+      const mapped: Race[] = data.map((g) => ({
+        id: String(g.id),
+        code: (g as any).codice ?? (g as any).code ?? "SPRINT_M",
+        name: nomeGara(g as any, "it"),
+        date: g.dataOraUtc,
+        discipline: (g as any).disciplina ?? "",
+        garaId: g.id, // per prefetchDettaglioGara
+      }));
+      setState((s) => ({ ...s, races: mapped }));
+    } catch (error) {
+      console.error("Errore fetchGare", error);
+    }
+  }
+
+  React.useEffect(() => {
+    if (!state.user) return;
+    // Admin needs a selected TO first
+    if (state.user.ruolo === "ADMIN" && !state.selectedToId) return;
+    fetchPrenotazioni();
+  }, [state.user?.id, state.user?.ruolo, state.selectedToId]);
+
+  // inside ToStoreProvider
+  async function fetchPrenotazioni() {
+    const role = state.user?.ruolo; // "ADMIN" | "TO"
+    if (!role) return;
+
+    const toId = isAdmin
+      ? state.selectedToId // admin: needs a selected TO
+      : state.user?.tourOperatorId?.toString(); // TO: own id
+
+    if (!toId) return; // admin with no TO selected yet
+
+    try {
+      const data = await api.prenotazioni({
+        role,
+        tourOperatorId: Number(toId),
+      });
+
+      // Flatten: one Booking per riga (your Booking type = 1 race + 1 sector)
+      const mapped: Booking[] = data.flatMap((p) =>
+        p.righe.map((r) => ({
+          id: `${p.id}-${r.id}`, // unique per riga
+          fromOptionId: p.opzioneId ? String(p.opzioneId) : undefined,
+          toId: String(p.tourOperatorId),
+          raceId: String(r.garaId),
+          sectorId: `${r.garaId}-${r.settoreId}`, // match your `sectors` id format
+          qty: r.quantita,
+          total: r.totale,
+          deposit: 0,
+          paid: p.totalePagato, // (per-prenotazione → ok if single riga)
+          paymentDueAt: p.scadenzaPagamento ?? p.creatoIl,
+          customer: p.cliente ?? p.tourOperatorNome,
+          status: mapStato(p.stato),
+          createdAt: p.creatoIl,
+        })),
+      );
+
+      setState((s) => ({ ...s, bookings: mapped }));
+
+      // ✅ FIX COMPLETO: prefetch dei settori delle gare presenti nelle
+      // prenotazioni. Senza questo, atterrando direttamente su /bookings
+      // (o dopo un reload), `sectors` è vuoto → il lookup fallisce e il PDF
+      // riceve undefined per nome/prezzo/categoria.
+      const raceIds = [...new Set(mapped.map((b) => b.raceId))];
+      raceIds.forEach((id) => {
+        prefetchDettaglioGara(Number(id))
+          .then((d) => registerSectors(Number(id), d))
+          .catch(() => undefined);
+      });
+    } catch (e) {
+      console.error("fetchPrenotazioni", e);
+    }
+  }
+
+  function mapStato(s: string): BookingStatus {
+    const k = s.toUpperCase();
+    if (k.includes("ANNULL")) return "cancelled";
+    if (k.includes("EMESS") || k.includes("CONFERM") || k.includes("ISSUED")) return "issued";
+    if (k.includes("PAGATA") || k.includes("PAID")) return "paid";
+    if (k.includes("PARZIAL")) return "partially_paid";
+    return "pending_payment";
+  }
+
+  React.useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("areato.session");
+      if (raw) {
+        const saved = JSON.parse(raw) as { user?: UtenteDto; selectedToId?: string };
+        if (saved.user) {
+          setState((s) => ({
+            ...s,
+            user: saved.user as UtenteDto,
+            selectedToId: saved?.user?.ruolo === "ADMIN" ? (saved.selectedToId ?? null) : null,
+          }));
+        }
+      }
+    } catch {}
+
+    fetchTourOperators();
+    fetchGare();
+  }, []);
+
+  const getTourOperatorsByName = async (name: string) => {
+    try {
+      const data = await api.tourOperatorsByName(name);
+      const mapped: TourOperator[] = data.map((dto) => ({
+        id: dto.id.toString(),
+        name: dto.ragioneSociale,
+        type: dto.tipo === "FanClub" ? "FanClub" : "TO",
+        email: dto.emailContatto || "",
+        plafond: dto.plafond ?? 0,
+        used: 0,
+        enabled: dto.abilitato,
+        partnerDiscount: dto.scontoPartner,
+        company: dto.azienda,
+      }));
+      setState((s) => ({ ...s, tourOperatorsByName: mapped }));
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  // Hydrate + persist in un unico effetto, per evitare la race.
+  const cartHydratedFor = React.useRef<number | undefined>(undefined);
+
+  React.useEffect(() => {
+    const uid = state.user?.id;
+    if (!uid) return;
+
+    // Primo giro per questo utente → idrata, prefetcha i settori delle gare
+    // presenti nel carrello, e NON persistere in questa passata.
+    if (cartHydratedFor.current !== uid) {
+      cartHydratedFor.current = uid;
+
+      const saved = readCartFromSession(uid);
+      setState((s) => ({ ...s, cart: saved }));
+
+      // Bug 1 fix: `sectors` riparte vuoto ad ogni reload e viene popolato
+      // solo aprendo un GaraCard in /races. Se l'utente ricarica su /cart,
+      // i settori del carrello non sono in store → prezzo/nome vuoti.
+      // Prefetchiamo il dettaglio delle sole gare nel carrello.
+      const raceIds = [...new Set(saved.map((c) => c.raceId))];
+      raceIds.forEach((id) => {
+        prefetchDettaglioGara(Number(id))
+          .then((d) => registerSectors(Number(id), d))
+          .catch(() => undefined);
+      });
+
+      return; // ← evita di scrivere [] sopra al carrello appena letto
+    }
+
+    writeCartToSession(uid, state.cart);
+  }, [state.cart, state.user?.id, registerSectors]);
+
+  const sendEmailForResetPassword = async (email: string) => {
+    try {
+      const res = await api.sendEmailForResetPassword(email);
+      console.log(res);
+    } catch (error) {}
+  };
+
+  // ----- Valore del contesto -----
+  const ctx: Ctx = {
+    ...state,
+    options: scoped(state.options),
+    bookings: scoped(state.bookings),
+    sales: scoped(state.sales),
+    allOptions: state.options,
+    allBookings: state.bookings,
+    allSales: state.sales,
+    audit: isAdmin ? state.audit : state.audit.filter((a) => a.user === state.user?.email),
+    isAdmin,
+    currentToId,
+    currentUserEmail: state.user?.email ?? "",
+    setUser,
+    logout,
+
+    addToCart: ({ raceId, sectorId, prezzoId, qty, note }) => {
+      setState((s) => {
+        const existing = s.cart.find((c) => c.sectorId === sectorId && c.raceId === raceId);
+        if (existing) {
+          return {
+            ...s,
+            cart: s.cart.map((c) =>
+              c.id === existing.id ? { ...c, qty: c.qty + qty, note: note || c.note } : c,
+            ),
+          };
+        }
+        return {
+          ...s,
+          cart: [
+            ...s.cart,
+            {
+              id: `c${Math.random().toString(36).slice(2, 8)}`,
+              raceId,
+              sectorId,
+              prezzoId,
+              qty,
+              note,
+            },
+          ],
+        };
+      });
+    },
+
+    updateCartItem: (id, patch) =>
+      setState((s) => ({ ...s, cart: s.cart.map((c) => (c.id === id ? { ...c, ...patch } : c)) })),
+
+    removeCartItem: (id) => setState((s) => ({ ...s, cart: s.cart.filter((c) => c.id !== id) })),
+
+    clearCart: () => setState((s) => ({ ...s, cart: [] })),
+
+    setSelectedTo,
+    createOption,
+    releaseOption,
+    validateOption,
+    rejectOption,
+    sendOptionPdf,
+    sendExpiryAlerts,
+    convertOptionToBooking,
+    createDirectBooking,
+    registerPayment,
+    convertBookingToSale,
+    cancelBooking,
+    toggleOperatorEnabled,
+    setPartnerDiscount,
+    sendInvite,
+    getTourOperatorsByName,
+    sendEmailForResetPassword,
+    registerSectors, // ✅ esposto
+
+    submitCart: async ({ kind, note }) => {
+      const items = state.cart;
+      if (items.length === 0) return 0;
+
+      if (!currentToId) {
+        toast.error("Seleziona un Tour Operator per proseguire.");
+        return 0;
+      }
+
+      // --- 1. arricchisci ogni riga con i dati del catalogo ---
+      const rows = items.map((c) => {
+        const race = state.races.find((r) => r.id === c.raceId);
+        const sector = state.sectors.find((s) => s.id === c.sectorId);
+        const price = sector?.priceTo ?? 0;
+        return {
+          ...c,
+          raceName: race?.name ?? "",
+          sectorName: sector?.name ?? "",
+          price,
+          subtotal: price * c.qty,
+        };
+      });
+
+      const totalQty = rows.reduce((a, r) => a + r.qty, 0);
+      const totalAmount = rows.reduce((a, r) => a + r.subtotal, 0);
+
+      const righe: RigaRequest[] = rows.map((r) => {
+        const idx = r.sectorId.indexOf("-");
+        return {
+          garaId: Number(r.sectorId.slice(0, idx)),
+          settoreId: r.sectorId.slice(idx + 1), // "COUA" — stringa
+          prezzoId: r.prezzoId,
+          quantita: r.qty,
+        };
+      });
+
+      const reqNote = note?.trim() || undefined;
+      const righeNote = rows
+        .map((r) => (r.note ? `${r.raceName} / ${r.sectorName}: ${r.note}` : null))
+        .filter(Boolean)
+        .join(" | ");
+
+      try {
+        if (kind === "option") {
+          await api.creaOpzione({
+            tourOperatorId: Number(currentToId),
+            note: [righeNote, reqNote].filter(Boolean).join(" — ") || undefined,
+            righe,
+          });
+        } else {
+          await api.creaPrenotazione({
+            tourOperatorId: Number(currentToId),
+            cliente: state.user?.nomeCompleto ?? currentTo.name,
+            noteTo: reqNote,
+            applicaScontoPartner: false,
+            righe,
+            ruolo: state.user?.ruolo ?? "TO",
+            role: state.user?.ruolo ?? "TO",
+          });
+        }
+
+        setState((s) => ({ ...s, cart: [] }));
+        removeCartFromSession(state.user?.id);
+
+        log({
+          entity: kind === "option" ? "option" : "booking",
+          entityId: "-",
+          action:
+            kind === "option"
+              ? "Richiesta opzione multi-gara"
+              : "Richiesta prenotazione multi-gara",
+          details: `${rows.length} righe, ${totalQty} posti, ${fmtEur(totalAmount)}`,
+        });
+
+        return rows.length;
+      } catch (err) {
+        const msg = err instanceof ApiError ? err.message : "Errore invio richiesta";
+        toast.error(msg);
+        return 0;
+      }
+    },
+    refreshBookings: fetchPrenotazioni,
+  };
+
+  return <StoreContext.Provider value={ctx}>{children}</StoreContext.Provider>;
+}
+
+export function useToStore() {
+  const ctx = React.useContext(StoreContext);
+  if (!ctx) throw new Error("useToStore must be used within ToStoreProvider");
+  return ctx;
+}
+
+// ----- Utility di formattazione -----
+export const fmtEur = (n: number) => {
+  const whole = Math.round(n)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${whole} €`;
+};
+
+const MESI = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"];
+
+export const fmtDate = (iso: string) => {
+  const d = new Date(iso);
+  const p = (n: number) => n.toString().padStart(2, "0");
+  return `${p(d.getUTCDate())} ${MESI[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+};
+
+export const fmtDateOnly = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getUTCDate().toString().padStart(2, "0")} ${MESI[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+};
+
+export const daysUntil = (iso: string) => {
+  const ms = new Date(iso).getTime() - Date.now();
+  return Math.ceil(ms / 86400000);
+};
+
+export function downloadCsv(filename: string, rows: (string | number)[][]) {
+  const csv = rows
+    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";"))
+    .join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}

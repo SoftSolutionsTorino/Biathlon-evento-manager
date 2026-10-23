@@ -1,40 +1,35 @@
  Retrieved user info for TourOperatoreId 33611: Email=s.sanfilippo@softsolutions-srl.com, Lingua=1, Password=123456789
+		
 
 
 
- OPEN SYMMETRIC KEY Customer_Key01  
-		DECRYPTION BY CERTIFICATE Biathlon01;  
-	DECLARE @ErrorSave INT
-	SET @ErrorSave = 0
-	Select
-		CONVERT(varchar(20), DecryptByKey(CNome)) as Nome,
-		CONVERT(varchar(20), DecryptByKey(CCognome)) as Cognome,
-		CONVERT(varchar(50), DecryptByKey(CIndirizzo)) as Indirizzo,
-		Cap,
-		Citta,
-		Provincia,
-		NumCivico,
-		Stato,
-		[Login],
-		[Password],
-		IsNull(CONVERT(varchar(50), DecryptByKey(CEmail)),'') as Email,
-		IsNull(CONVERT(varchar(20), DecryptByKey(CTelefono)),'') as Telefono,		
-		IsNull(Cellulare,'') as Cellulare ,
-		IsNull(Fax,''),
-		IsNull(CONVERT(varchar(16), DecryptByKey(CCodiceFiscale)),'') as CodiceFiscale,
-		IdAnagrafica,
-		Convert(Varchar(10), DataNascita, 103) as DataNascita,
-		ComuneNascita,
-		Lingua,
-		Azienda,
-		TipoUtente,
-		TicketAlert,
-		IsNull(CONVERT(varchar(7), DecryptByKey(CodDestFE)),'') AS CodDestFE,
-		IsNull(CONVERT(varchar(80), DecryptByKey(PecDestFE)),'') AS PecDestFE,
-		TelefonoVerificato,
-		EmailVerificata,
-		isnull(AnagraficaUtenteFinale.ipaddress,'') as ipaddress, AnagraficaUtenteFinale.Agente, isnull(AnagraficaUtenteFinale.prefisso,'') as prefisso, 
-		DataConsenso,
-		AbilitatoGestionaleOTA
-	From
-		AnagraficaUtenteFinale where IdAnagrafica = 33611
+
+
+
+
+
+
+
+
+TASK: Landing page desktop per un negozio di borse artigianali in pelle. Sezioni: hero con prodotto principale e CTA "Scopri la collezione", 3 borse in evidenza con prezzo, storia del laboratorio, recensioni clienti, newsletter, footer con contatti e indirizzo.
+
+CONTEXT: Il negozio vende online e ha una bottega fisica in centro. Clienti donne 30-55 anni, cercano qualità e pezzi unici, non prezzi bassi. Arrivano soprattutto da Instagram, quindi la pagina deve funzionare anche su mobile.
+
+REFERENCE: Stile elegante e caldo, palette cuoio #8B5A2B, crema #F5EFE6, nero #1A1A1A. Titoli con font serif, testi sans serif. Foto grandi dei prodotti su sfondo neutro. Sempre: prezzo visibile su ogni borsa, CTA ripetuta almeno due volte. Mai: banner sconti, countdown, effetti da fast fashion.
+
+SUCCESS: Una pagina che trasmette artigianalità e porta al catalogo. Non deve sembrare un e-commerce generico da marketplace.
+
+RULES: Tutto in italiano, massimo 3 borse in evidenza, form newsletter con solo campo email.
+
+ALIGNMENT: Se non ho sp
+
+ALIGNMENT: Se non ho specificato qualcosa, scegli l'opzione più coerente con uno stile artigianale di fascia alta. Chiedi solo se due richieste si contraddicono.
+STACK: 
+
+
+
+more lines... ✅
+booking details language ✅
+lang from db ✅
+info about general information ✅
+associate the pdf with email

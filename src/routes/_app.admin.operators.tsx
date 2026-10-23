@@ -42,7 +42,6 @@ function OperatorsPage() {
 
   const rows = q ? tourOperatorsByName : tourOperators;
 
-  console.log(tourOperatorsByName);
 
   return (
     <div className="space-y-6">

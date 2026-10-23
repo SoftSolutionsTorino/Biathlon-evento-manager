@@ -1,43 +1,38 @@
 /**
- * Catalogo Gare — modello dati e caricamento.
+ * Catalogo Gare Anterselva — dati LIVE dal gestionale.
  * ---------------------------------------------------------------------------
- * I tipi ricalcano 1:1 il JSON restituito dal backend (camelCase) che a sua
- * volta ricalca le colonne di Gare.xlsx / Prezzi.xlsx / Settori.xlsx prodotte
- * dalle stored procedure sp_GetGare / sp_GetPrezzi / sp_GetSettori.
+ * Fonte dati: stored procedure sp_GetGare / sp_GetSettori / sp_GetPrezzi /
+ * sp_GetEventiInAbbonamento, esposte rispettivamente da:
+ *   - GET /api/gare
+ *   - GET /api/settori?garaId=X
+ *   - GET /api/prezzi?garaId=X
+ *   - GET /api/abbonamenti/eventi?garaId=X
  *
- * In modalità demo (nessun backend configurato) i dati vengono serviti da
- * questo modulo, con un ritardo simulato per esercitare loader e prefetch.
- * Quando VITE_API_BASE_URL è impostata, si usano gli endpoint reali:
- *   GET /api/gare · GET /api/settori?garaId= · GET /api/prezzi?garaId=
- *   GET /api/catalogo/completo (tutto raggruppato in una chiamata)
+ * Strategia:
+ *   - `loadGare()` carica l'elenco leggero delle gare + abbonamenti.
+ *   - `prefetchDettaglioGara(garaId)` carica settori + prezzi di UNA gara e
+ *     li unisce in un `SettoreCatalogo[]` (settore + prezzi annidati).
+ *     Il risultato è cache-ato in memoria: la seconda chiamata è istantanea.
+ *   - `loadEventiAbbonamento(garaId)` carica le gare comprese in un abbonamento.
+ *   - Tutti i testi sono già multilingua nel payload (nomeIt / nomeDe / nomeEn).
  */
-import type { Lang } from "@/lib/i18n";
 import { api } from "@/lib/api";
 
-// ----- Tipi (identici ai DTO backend) --------------------------------------
-export type Gara = {
-  id: number;
-  nomeIt: string;
-  nomeDe: string | null;
-  nomeEn: string | null;
-  edizione: number;
-  dataOraUtc: string; // ISO
-  attiva: boolean;
-};
+// ----------------------------------------------------------------- Tipi -----
+
+export type Lingua = "it" | "de" | "en";
 
 export type Prezzo = {
   id: number;
-  garaId: number;
   settoreId: string;
   tipologia: string;
-  tipologiaEN: string | null;
-  tipologiaDE: string | null;
+  tipologiaDe: string | null;
+  tipologiaEn: string | null;
   importo: number;
 };
 
 export type Settore = {
-  id: string;
-  garaId: number;
+  id: string; // es. "COUA", "LOUN", "P1=P2"
   nomeIt: string;
   nomeDe: string | null;
   nomeEn: string | null;
@@ -45,111 +40,136 @@ export type Settore = {
   capienza: number;
 };
 
-/** Vista raggruppata per GaraId usata dalla pagina Catalogo Gare. */
-export type SettoreCatalogo = Omit<Settore, "garaId"> & { prezzi: Prezzo[] };
-export type GaraCatalogo = Gara & { settori: SettoreCatalogo[] };
+/** Settore + suoi prezzi — è quello che serve al dettaglio gara. */
+export type SettoreCatalogo = Settore & {
+  prezzi: Prezzo[];
+};
 
-// ----- Helper multilingua ----------------------------------------------------
-export const nomeGara = (g: Pick<Gara, "nomeIt" | "nomeDe" | "nomeEn">, lang: Lang) =>
-  (lang === "de" ? g.nomeDe : lang === "en" ? g.nomeEn : g.nomeIt) || g.nomeIt;
+export type Gara = {
+  id: number;
+  codice: string;
+  disciplina: string;
+  nomeIt: string;
+  nomeDe: string | null;
+  nomeEn: string | null;
+  dataOraUtc: string | null; // null = abbonamento
+  edizione: number | string;
+  attiva: boolean;
+  abbonamento: boolean; // true = abbonamento, false = gara singola
+};
 
-export const nomeSettore = (s: Pick<Settore, "nomeIt" | "nomeDe" | "nomeEn">, lang: Lang) =>
-  (lang === "de" ? s.nomeDe : lang === "en" ? s.nomeEn : s.nomeIt) || s.nomeIt;
+export type EventoAbbonamento = {
+  garaId: number; // ID della gara-abbonamento a cui appartiene
+  dataOraUtc: string;
+  nomeIt: string;
+  nomeDe: string | null;
+  nomeEn: string | null;
+};
 
-export const tipologiaPrezzo = (p: Pick<Prezzo, "tipologia" | "tipologiaDE" | "tipologiaEN">, lang: Lang) =>
-  (lang === "de" ? p.tipologiaDE : lang === "en" ? p.tipologiaEN : p.tipologia) || p.tipologia;
+/** Catalogo completo (usato da /api/catalogo/completo, se ti serve altrove). */
+export type GaraCatalogo = Gara & {
+  settori: SettoreCatalogo[];
+};
 
-/** Raggruppa gare/settori/prezzi piatti nella struttura annidata per GaraId. */
-export function raggruppaCatalogo(gare: Gara[], settori: Settore[], prezzi: Prezzo[]): GaraCatalogo[] {
-  return gare.map((g) => ({
-    ...g,
-    settori: settori
-      .filter((s) => s.garaId === g.id)
-      .map(({ garaId: _g, ...s }) => ({
-        ...s,
-        prezzi: prezzi
-          .filter((p) => p.garaId === g.id && p.settoreId === s.id)
-          .sort((a, b) => a.importo - b.importo),
-      })),
-  }));
-}
+// ------------------------------------------------------------- Cache -------
+// Cache in-memory: Map<garaId, Promise<SettoreCatalogo[]>>. La promise viene
+// messa subito in cache (prima che risolva) così due chiamate concorrenti
+// sullo stesso garaId condividono lo stesso fetch.
+const dettaglioCache = new Map<number, Promise<SettoreCatalogo[]>>();
 
-// ----- Dati demo: estratti reali da Gare.xlsx / Settori.xlsx / Prezzi.xlsx ----
-export const GARE_DEMO: Gara[] = [
-  { id: 30, nomeIt: "Individuale maschile", nomeDe: "Einzel Männer", nomeEn: "Men's Individual", edizione: 2027, dataOraUtc: "2027-01-14T14:15:00Z", attiva: true },
-  { id: 31, nomeIt: "Individuale femminile", nomeDe: "Einzel Frauen", nomeEn: "Women's Individual", edizione: 2027, dataOraUtc: "2027-01-15T14:15:00Z", attiva: true },
-  { id: 32, nomeIt: "Staffetta mista singola (M+F) 11:45 / Staffetta mista (M+F) 14:30", nomeDe: "Single Mixed Staffel (M+F) 11:45 Uhr / Mixed Staffel (M+F) 14:30 Uhr", nomeEn: "Single Mixed Relay (M+W) 11:45 / Mixed Relay (M+W) 14:30", edizione: 2027, dataOraUtc: "2027-01-16T11:45:00Z", attiva: true },
-  { id: 33, nomeIt: "Partenza in linea maschile 12:45 / Partenza in linea femminile 15:00", nomeDe: "Massenstart Männer 12:45 Uhr / Massenstart Frauen 15:00 Uhr", nomeEn: "Men's Mass Start 12:45 / Women's Mass Start 15:00", edizione: 2027, dataOraUtc: "2027-01-17T12:45:00Z", attiva: true },
-];
+// --------------------------------------------------------------- Loader ----
 
-const SETTORI_BASE: Omit<Settore, "garaId">[] = [
-  { id: "COUA", nomeIt: "Percorso", nomeDe: "Strecke", nomeEn: "Course Area", postiNumerati: false, capienza: 6000 },
-  { id: "DISA", nomeIt: "Area disabili", nomeDe: "Handicap Bereich", nomeEn: "Handicap-Area", postiNumerati: false, capienza: 30 },
-  { id: "STAL", nomeIt: "Posto in piedi Settore L", nomeDe: "Stehbereich Sektor L", nomeEn: "Standing Area Sector L", postiNumerati: false, capienza: 2700 },
-  { id: "STM1", nomeIt: "Posto in piedi Settore M1", nomeDe: "Stehbereich Sektor M1", nomeEn: "Standing Area Sector M1", postiNumerati: false, capienza: 2388 },
-  { id: "STM2", nomeIt: "Posto in piedi Settore M2", nomeDe: "Stehbereich Sektor M2", nomeEn: "Standing Area Sector M2", postiNumerati: false, capienza: 2013 },
-  { id: "STM3", nomeIt: "Posto in piedi Settore M3", nomeDe: "Stehbereich Sektor M3", nomeEn: "Standing Area Sector M3", postiNumerati: false, capienza: 600 },
-  { id: "LOUN", nomeIt: "Antholz Lounge Posto a sedere Settore P1÷P2", nomeDe: "Antholz Lounge Sitzbereich Sektor P1÷P2", nomeEn: "Antholz Lounge Seating Area Sector P1÷P2", postiNumerati: true, capienza: 306 },
-  { id: "SEAT", nomeIt: "Posto a sedere Settore V1÷J", nomeDe: "Sitzbereich Sektor V1÷J", nomeEn: "Seating Area Sector V1÷J", postiNumerati: true, capienza: 2306 },
-  { id: "SEAU", nomeIt: "Posto a sedere Settore U", nomeDe: "Sitzbereich Sektor U", nomeEn: "Seating Area Sector U", postiNumerati: true, capienza: 270 },
-];
-
-/** Ordine come in Settori.xlsx: PostiNumerati, Id, GaraId. */
-export const SETTORI_DEMO: Settore[] = SETTORI_BASE.flatMap((s) => GARE_DEMO.map((g) => ({ ...s, garaId: g.id })));
-
-const INTERO = { tipologia: "Intero", tipologiaEN: "Full Price", tipologiaDE: "Normalpreis" };
-const listino = (id: number, gare: number[], settoreId: string, importo: number): Prezzo[] =>
-  gare.map((garaId) => ({ id, garaId, settoreId, importo, ...INTERO }));
-
-/** Ordine come in Prezzi.xlsx: Id, GaraId. */
-export const PREZZI_DEMO: Prezzo[] = [
-  ...listino(720, [30, 31], "LOUN", 220),
-  ...listino(721, [30, 31], "COUA", 26),
-  ...listino(722, [30, 31], "STAL", 47),
-  ...listino(723, [30, 31], "STM1", 42),
-  ...listino(724, [30, 31], "STM2", 42),
-  ...listino(725, [30, 31], "STM3", 42),
-  ...listino(752, [32, 33], "LOUN", 260),
-  ...listino(754, [32, 33], "COUA", 34),
-  ...listino(758, [32, 33], "STAL", 54),
-  ...listino(760, [32, 33], "STM1", 48),
-  ...listino(761, [32, 33], "STM2", 48),
-  ...listino(762, [32, 33], "STM3", 48),
-];
-
-// ----- Caricamento (API reale o demo) ----------------------------------------
-const useApi = () => Boolean(import.meta.env.VITE_API_BASE_URL);
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** Elenco gare: chiamata leggera eseguita all'apertura della pagina. */
+/**
+ * Elenco gare + abbonamenti (payload leggero: niente settori/prezzi).
+ * Endpoint: GET /api/gare  → sp_GetGare
+ */
 export async function loadGare(): Promise<Gara[]> {
-  if (useApi()) return api.catalogoSp.gare();
-  await wait(350);
-  return GARE_DEMO;
+  return api.catalogoSp.gare() as Promise<Gara[]>;
 }
 
 /**
- * Dettaglio di una gara (settori + prezzi), caricato in modo lazy quando la
- * scheda viene espansa, o in prefetch al passaggio del mouse.
+ * Dettaglio di una singola gara: settori + prezzi, uniti in `SettoreCatalogo[]`.
+ * Fa DUE chiamate (settori, prezzi) in parallelo e le unisce per settoreId.
+ * Il risultato è cache-ato: chiamate successive sullo stesso garaId tornano subito.
  */
-export async function loadDettaglioGara(garaId: number): Promise<SettoreCatalogo[]> {
-  if (useApi()) {
-    const [settori, prezzi] = await Promise.all([api.catalogoSp.settori(garaId), api.catalogoSp.prezzi(garaId)]);
-    const gara = { id: garaId } as Gara;
-    return raggruppaCatalogo([gara], settori, prezzi)[0]?.settori ?? [];
-  }
-  await wait(450);
-  return raggruppaCatalogo(
-    GARE_DEMO.filter((g) => g.id === garaId),
-    SETTORI_DEMO,
-    PREZZI_DEMO,
-  )[0]?.settori ?? [];
+export function prefetchDettaglioGara(garaId: number): Promise<SettoreCatalogo[]> {
+  const cached = dettaglioCache.get(garaId);
+  if (cached) return cached;
+
+  const promise = Promise.all([
+    api.catalogoSp.settori(garaId) as Promise<Settore[]>,
+    api.catalogoSp.prezzi(garaId) as Promise<Prezzo[]>,
+  ])
+    .then(([settori, prezzi]) => {
+      const bySettore = new Map<string, Prezzo[]>();
+      for (const p of prezzi) {
+        const list = bySettore.get(p.settoreId) ?? [];
+        list.push(p);
+        bySettore.set(p.settoreId, list);
+      }
+      return settori.map<SettoreCatalogo>((s) => ({
+        ...s,
+        prezzi: bySettore.get(s.id) ?? [],
+      }));
+    })
+    .catch((err) => {
+      // Non cache-are gli errori: al prossimo hover si ritenta.
+      dettaglioCache.delete(garaId);
+      throw err;
+    });
+
+  dettaglioCache.set(garaId, promise);
+  return promise;
 }
 
-// Cache in memoria del dettaglio per gara: evita richieste ripetute e rende
-// istantanea l'apertura dopo il prefetch (hover / focus sulla scheda).
-const dettaglioCache = new Map<number, Promise<SettoreCatalogo[]>>();
-export function prefetchDettaglioGara(garaId: number) {
-  if (!dettaglioCache.has(garaId)) dettaglioCache.set(garaId, loadDettaglioGara(garaId));
-  return dettaglioCache.get(garaId)!;
+/**
+ * Eventi compresi in un abbonamento.
+ * Endpoint: GET /api/abbonamenti/eventi?garaId=X
+ */
+export async function loadEventiAbbonamento(garaId: number): Promise<EventoAbbonamento[]> {
+  return api.catalogoSp.eventiAbbonamento(garaId) as Promise<EventoAbbonamento[]>;
+}
+
+/** Svuota la cache del dettaglio (utile dopo un "refresh catalogo"). */
+export function clearCatalogoCache() {
+  dettaglioCache.clear();
+}
+
+/** Forza il refresh lato backend e svuota la cache locale. */
+export async function refreshCatalogo(): Promise<void> {
+  await api.catalogoSp.refresh();
+  clearCatalogoCache();
+}
+
+// ------------------------------------------------------- Etichette i18n ----
+
+function pick(
+  lang: Lingua,
+  it: string,
+  de: string | null | undefined,
+  en: string | null | undefined,
+): string {
+  if (lang === "de") return de?.trim() || it;
+  if (lang === "en") return en?.trim() || it;
+  return it;
+}
+
+/** Nome gara/abbonamento tradotto. */
+export function nomeGara(g: Gara, lang: Lingua): string {
+  return pick(lang, g.nomeIt, g.nomeDe, g.nomeEn);
+}
+
+/** Nome evento di un abbonamento tradotto. */
+export function nomeEvento(e: EventoAbbonamento, lang: Lingua): string {
+  return pick(lang, e.nomeIt, e.nomeDe, e.nomeEn);
+}
+
+/** Nome settore tradotto. */
+export function nomeSettore(s: Settore, lang: Lingua): string {
+  return pick(lang, s.nomeIt, s.nomeDe, s.nomeEn);
+}
+
+/** Tipologia prezzo tradotta. */
+export function tipologiaPrezzo(p: Prezzo, lang: Lingua): string {
+  return pick(lang, p.tipologia, p.tipologiaDe, p.tipologiaEn);
 }
