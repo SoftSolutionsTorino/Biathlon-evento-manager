@@ -23,6 +23,7 @@ import { Route as AppAdminOperatorsRouteImport } from './routes/_app.admin.opera
 import { Route as AppAdminPaymentsRouteImport } from './routes/_app.admin.payments'
 import { Route as AppAdminSummaryRouteImport } from './routes/_app.admin.summary'
 import { Route as AppAdminValidationsRouteImport } from './routes/_app.admin.validations'
+import { Route as AppAdminValidationBookingsRouteImport } from './routes/_app.admin.validation.bookings'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -93,6 +94,12 @@ const AppAdminValidationsRoute = AppAdminValidationsRouteImport.update({
   path: '/admin/validations',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAdminValidationBookingsRoute =
+  AppAdminValidationBookingsRouteImport.update({
+    id: '/admin/validation/bookings',
+    path: '/admin/validation/bookings',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -108,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/admin/payments': typeof AppAdminPaymentsRoute
   '/admin/summary': typeof AppAdminSummaryRoute
   '/admin/validations': typeof AppAdminValidationsRoute
+  '/admin/validation/bookings': typeof AppAdminValidationBookingsRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -123,6 +131,7 @@ export interface FileRoutesByTo {
   '/admin/payments': typeof AppAdminPaymentsRoute
   '/admin/summary': typeof AppAdminSummaryRoute
   '/admin/validations': typeof AppAdminValidationsRoute
+  '/admin/validation/bookings': typeof AppAdminValidationBookingsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -140,6 +149,7 @@ export interface FileRoutesById {
   '/_app/admin/payments': typeof AppAdminPaymentsRoute
   '/_app/admin/summary': typeof AppAdminSummaryRoute
   '/_app/admin/validations': typeof AppAdminValidationsRoute
+  '/_app/admin/validation/bookings': typeof AppAdminValidationBookingsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -157,6 +167,7 @@ export interface FileRouteTypes {
     | '/admin/payments'
     | '/admin/summary'
     | '/admin/validations'
+    | '/admin/validation/bookings'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -172,6 +183,7 @@ export interface FileRouteTypes {
     | '/admin/payments'
     | '/admin/summary'
     | '/admin/validations'
+    | '/admin/validation/bookings'
   id:
     | '__root__'
     | '/_app'
@@ -188,6 +200,7 @@ export interface FileRouteTypes {
     | '/_app/admin/payments'
     | '/_app/admin/summary'
     | '/_app/admin/validations'
+    | '/_app/admin/validation/bookings'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -295,6 +308,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAdminValidationsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/admin/validation/bookings': {
+      id: '/_app/admin/validation/bookings'
+      path: '/admin/validation/bookings'
+      fullPath: '/admin/validation/bookings'
+      preLoaderRoute: typeof AppAdminValidationBookingsRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -311,6 +331,7 @@ interface AppRouteChildren {
   AppAdminPaymentsRoute: typeof AppAdminPaymentsRoute
   AppAdminSummaryRoute: typeof AppAdminSummaryRoute
   AppAdminValidationsRoute: typeof AppAdminValidationsRoute
+  AppAdminValidationBookingsRoute: typeof AppAdminValidationBookingsRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -326,6 +347,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAdminPaymentsRoute: AppAdminPaymentsRoute,
   AppAdminSummaryRoute: AppAdminSummaryRoute,
   AppAdminValidationsRoute: AppAdminValidationsRoute,
+  AppAdminValidationBookingsRoute: AppAdminValidationBookingsRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

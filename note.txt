@@ -28,8 +28,28 @@ STACK:
 
 
 
-more lines... ✅
-booking details language ✅
-lang from db ✅
-info about general information ✅
-associate the pdf with email
+
+
+
+Email redirect function:
+Quando l'utente crea una prenotazione aggiungo un log 
+Quando crea un opzione 
+Quando converte l'opzione
+IN due pagine diverse validation opzioni e prenotazione 
+
+
+
+
+
+
+
+
+Informazioni generali:
+Il tour operator nella sua area personale puo creare le opzione e prenotzzioni prima lo inserisce nel carello
+e poi lo crea, quando lo crea arriva un email e arriva una email con allegato un pdf se e una prenotazione 
+quando l'opzione viene validata viene mandata un email con pdf al tour operator stessa cosa quando la prenotazione viene saldata e validata
+
+Il pdf utilizza la lingua impostato nella tabella del utente, si puo cambiare la lingua del pdf attraverso il menu della lingua ma il titolo del evento 
+e della categoria rimangono lo stesso 
+
+

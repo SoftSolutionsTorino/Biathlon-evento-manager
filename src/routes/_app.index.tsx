@@ -11,7 +11,7 @@ import { useToStore, fmtEur, daysUntil } from "@/lib/toStore";
 import { useI18n, useFormatters } from "@/lib/i18n";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-
+import { EmailLogSection } from "@/components/EmailLogSection";
 export const Route = createFileRoute("/_app/")({
   component: Dashboard,
 });
@@ -156,7 +156,7 @@ function Dashboard() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+        {/* <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="flex items-center gap-2 text-base font-semibold">
               <AlertTriangle className="h-4 w-4 text-warning-foreground" />
@@ -191,7 +191,7 @@ function Dashboard() {
               );
             })}
           </CardContent>
-        </Card>
+        </Card> */}
 
         {/* <Card>
           <CardHeader>
@@ -211,6 +211,51 @@ function Dashboard() {
           </CardContent>
         </Card> */}
       </div>
+      {isAdmin ? (
+        <EmailLogSection max={10} />
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Card className="lg:col-span-2">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                <AlertTriangle className="h-4 w-4 text-warning-foreground" />
+                {t("dash.expiring")}
+              </CardTitle>
+              <Link to="/options" className="text-xs text-primary hover:underline">
+                {t("common.viewAll")}
+              </Link>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {expiringSoon.length === 0 && (
+                <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
+                  {t("dash.expiring.empty")}
+                </div>
+              )}
+              {expiringSoon.map((o) => {
+                const r = races.find((x) => x.id === o.raceId)!;
+                const sec = sectors.find((x) => x.id === o.sectorId)!;
+                const d = daysUntil(o.expiresAt);
+                return (
+                  <div
+                    key={o.id}
+                    className="flex items-center justify-between rounded-md border p-3"
+                  >
+                    <div>
+                      <div className="text-sm font-medium">{r?.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {sec?.name} · {o.qty} {t("common.seats")} · {fmtDate(o.expiresAt)}
+                      </div>
+                    </div>
+                    <Badge variant={d <= 1 ? "destructive" : "secondary"}>
+                      {d <= 0 ? t("dash.expiring.today") : `${d} ${t("common.days")}`}
+                    </Badge>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">

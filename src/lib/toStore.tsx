@@ -640,7 +640,7 @@ export function ToStoreProvider({ children }: { children: React.ReactNode }) {
           statoId: p.idStato,
           status: bookingStatusFromStatoId(p.idStato),
           createdAt: p.creatoIl,
-          tipologia: '',
+          tipologia: "",
         })),
       );
       setState((s) => ({ ...s, bookings: mapped }));
@@ -701,38 +701,42 @@ export function ToStoreProvider({ children }: { children: React.ReactNode }) {
   }
 
   const fetchAudits = async () => {
-    const selectedToId = state?.selectedTOperator?.id
-      ? Number(state.selectedTOperator.id)
-      : undefined;
-
     let toId = 0;
     let userId = 0;
 
     if (isAdmin) {
-      if (selectedToId) {
-        toId = selectedToId;
-      } else {
-        userId = state?.user?.id ?? 0;
-      }
+      // Admin: SUE azioni (su qualunque TO) ∪ TUTTE le azioni del TO selezionato.
+      // Servono ENTRAMBI: userId per il ramo "le mie", toId per il ramo "di quel TO".
+      userId = state?.user?.id ?? 0;
+      toId = state?.selectedToId ? Number(state.selectedToId) : 0;
     } else {
+      // TO: solo le azioni del proprio TO.
       toId = state?.user?.tourOperatorId ?? 0;
     }
 
+    // Nessun filtro utile → lista vuota (evita full-scan accidentale).
+    if (toId <= 0 && userId <= 0) {
+      setState((s) => ({ ...s, audit: [] }));
+      return;
+    }
+
     try {
-      const res = await api.audit(toId, userId);
-      const mapped: AuditEntry[] = res
-        .filter((r) => !isAdmin || r.utenteId === userId)
-        .map((o) => ({
-          id: String(o.id),
-          at: o.creatoIl ?? "",
-          user: o.tourOperator ?? "",
-          ip: o.ip ?? "",
-          entity: o.entita ?? "",
-          entityId: o.entitaId ?? "",
-          action: o.azione ?? "",
-          details: o.dettagli ?? "",
-          datetime: o.creatoIl,
-        }));
+      const res = await api.audit(toId || undefined, userId || undefined);
+
+      // NIENTE .filter(): il backend con OR restituisce già l'insieme corretto
+      // (le mie azioni ∪ le azioni del TO selezionato).
+      const mapped: AuditEntry[] = res.map((o) => ({
+        id: String(o.id),
+        at: o.creatoIl ?? "",
+        user: o.utente ?? o.tourOperator ?? "",
+        ip: o.ip ?? "",
+        entity: o.entita ?? "",
+        entityId: o.entitaId ?? "",
+        action: o.azione ?? "",
+        details: o.dettagli ?? "",
+        datetime: o.creatoIl,
+      }));
+
       setState((s) => ({ ...s, audit: mapped }));
     } catch (e) {
       console.error("fetchAudits", e);
@@ -781,7 +785,31 @@ export function ToStoreProvider({ children }: { children: React.ReactNode }) {
     utenteId: number,
   ) => {
     try {
+      // Stato precedente (dalla cache, se presente)
+      const previous = state.options.find((o) => o.optionId === optionId);
+      const previousStato = previous?.statoId;
+
+      // Rileva transizione ≠VALIDATA → VALIDATA
+      const becomesValidata =
+        previousStato !== STATO_IDS.VALIDATA && idStato === STATO_IDS.VALIDATA;
+
       await api.aggiornaStatoOpzione(optionId, idStato, idTourOperator, utenteId);
+
+      if (becomesValidata) {
+        try {
+          // Ricarica il dettaglio completo per avere righe + scadeIl aggiornati
+          const full = await api.opzione(optionId, {
+            tourOperatorId: idTourOperator,
+            role: state.user?.ruolo === "ADMIN" ? "ADMIN" : "TO",
+          });
+          await sendOptionPdfValidata(full);
+          toast.success(`Email 'validata' inviata per ${full.numero}.`);
+        } catch (e) {
+          console.error("[updateOptionStato] invio email validata fallito", e);
+          toast.error("Stato aggiornato ma email 'validata' non inviata.");
+        }
+      }
+
       await fetchOpzioni();
     } catch (error) {
       const msg = error instanceof ApiError ? error.message : "Errore aggiornamento stato opzione";
@@ -797,7 +825,53 @@ export function ToStoreProvider({ children }: { children: React.ReactNode }) {
     utenteId: number,
   ) => {
     try {
-      await api.aggiornaStatoPrenotazione(prenotazioneId, idStato, idTourOperator, utenteId);
+      // Stato precedente (dal Booking in cache, se presente)
+      const previous = state.bookings.find((b) => b.prenotazioneId === prenotazioneId);
+      const previousStato = previous?.statoId;
+
+      // Rileva le transizioni: ≠X → X
+      const becomesValidata =
+        previousStato !== STATO_IDS.VALIDATA && idStato === STATO_IDS.VALIDATA;
+      const becomesSaldato = previousStato !== STATO_IDS.SALDATA && idStato === STATO_IDS.SALDATA;
+
+      const updated = await api.aggiornaStatoPrenotazione(
+        prenotazioneId,
+        idStato,
+        idTourOperator,
+        utenteId,
+      );
+
+      // Ricarica il dettaglio completo SOLO se dobbiamo generare il PDF
+      let full: PrenotazioneDto | undefined;
+      if (becomesValidata || becomesSaldato) {
+        full = updated?.righe?.length
+          ? updated
+          : await api.prenotazione(prenotazioneId, {
+              tourOperatorId: idTourOperator,
+              role: state.user?.ruolo === "ADMIN" ? "ADMIN" : "TO",
+            });
+      }
+
+      if (becomesValidata && full) {
+        try {
+          await sendBookingPdfValidata(full);
+          toast.success(`Email 'validata' inviata per ${full.numero}.`);
+        } catch (e) {
+          console.error("[updatePrenotazioneStato] invio email validata fallito", e);
+          toast.error("Stato aggiornato ma email 'validata' non inviata.");
+        }
+      }
+
+      if (becomesSaldato && full) {
+        try {
+          await sendBookingPdfSaldata(full);
+          toast.success(`Email 'saldata' inviata per ${full.numero}.`);
+        } catch (e) {
+          console.error("[updatePrenotazioneStato] invio email saldata fallito", e);
+          toast.error("Stato aggiornato ma email 'saldata' non inviata.");
+        }
+      }
+
       await fetchPrenotazioni();
     } catch (error) {
       const msg =
@@ -901,100 +975,183 @@ export function ToStoreProvider({ children }: { children: React.ReactNode }) {
    */
   const sendBookingPdf = async (pren: PrenotazioneDto): Promise<void> => {
     try {
-      const lang = languageFromUser(state?.user?.lingua);
-
-      // 1. header/footer images as data URIs
-      const imgs = await loadPdfImages();
-
-      // 2. consistent date formatter per language
-      const dateFmt = new Intl.DateTimeFormat(
-        lang === "en" ? "en-GB" : lang === "de" ? "de-DE" : "it-IT",
-        { day: "2-digit", month: "2-digit", year: "numeric" },
-      );
-      const formatDate = (iso: string | null | undefined) => {
-        if (!iso) return "—";
-        const d = new Date(iso);
-        return Number.isNaN(d.getTime()) ? "—" : dateFmt.format(d);
-      };
-
-      // 3. resolve race / sector / tipologia from the local catalog
-      //    (the backend does NOT send `gara`, `settore`, `tipologia`
-      //     in PrenotazioneRigaDto — it's a known serialization gap)
-      const rows = pren.righe.map((r) => {
-        const raceId = String(r.garaId);
-        const race = state.races.find((x) => x.id === raceId);
-
-        const sectorKey = `${r.garaId}-${r.settoreId}`;
-        const sector = state.sectors.find((x) => x.id === sectorKey);
-        const price = sector?.prezzi?.find((p) => p.id === r.prezzoId);
-
-        const ticketType =
-          lang === "en"
-            ? (price?.tipologiaEN ?? price?.tipologia ?? "Full Price")
-            : lang === "de"
-              ? (price?.tipologiaDE ?? price?.tipologia ?? "Normalpreis")
-              : (price?.tipologia ?? "Intero");
-
-        return {
-          date: race?.date ? formatDate(race.date) : "—",
-          race: race ? nomeLocalizzato(race, lang) : `Gara #${r.garaId}`,
-          ticketType,
-          category: sector ? nomeLocalizzato(sector, lang) : r.settoreId,
-          qty: r.quantita,
-          unitPrice: r.prezzoUnitario,
-          total: r.totale,
-        };
-      });
-
-      const rowsSum = rows.reduce((s, r) => s + r.total, 0);
-      const totalQty = rows.reduce((s, r) => s + r.qty, 0);
-
-      // 4. service fees: prefer the backend total if >0, else
-      //    rate × qty from settings (backend leaves it at 0)
-      const serviceFeeTotal =
-        pren.totaleCommissioni > 0
-          ? pren.totaleCommissioni
-          : (state.settings?.servizioPrezzo ?? 0) * totalQty;
-
-      const emailFeeTotal = state.settings?.emailPrezzo ?? 0;
-      const grandTotal = rowsSum + serviceFeeTotal + emailFeeTotal;
-
-      // 5. paymentDueDays: required to trigger the payment + bank block
-      const paymentDueDays = pren.scadenzaPagamento
-        ? Math.max(
-            0,
-            Math.round(
-              (new Date(pren.scadenzaPagamento).getTime() - new Date(pren.creatoIl).getTime()) /
-                86_400_000,
-            ),
-          )
-        : 7;
-
-      const b64 = await generatePdfBase64({
-        kind: "BOOKING",
-        lang,
-        date: pren.creatoIl,
-        number: pren.numero,
-        operator: pren.tourOperatorNome,
-        customer: { name: pren.cliente ?? pren.tourOperatorNome },
-        rows,
-        serviceFees: serviceFeeTotal,
-        emailFees: emailFeeTotal,
-        grandTotal,
-        paymentDueDays,
-        notes: pren.noteTo ?? undefined,
-        headerImage: imgs.header, // ← FIX: was missing
-        footerImage: imgs.footer, // ← FIX: was missing
-        user: state?.user ?? null,
-        settings: state.settings,
-        t,
-      });
-
+      const b64 = await buildBookingPdfBase64(pren);
       await api.uploadPrenotazionePdf(pren.id, b64);
     } catch (e) {
       console.error("[sendBookingPdf] upload PDF fallito per", pren.numero, e);
       toast.error(`PDF/email non inviati per ${pren.numero}`);
     }
+  };
+
+  const sendBookingPdfSaldata = async (pren: PrenotazioneDto): Promise<void> => {
+    try {
+      const b64 = await buildBookingPdfBase64(pren);
+      await api.uploadPrenotazionePdfSaldata(pren.id, b64);
+    } catch (e) {
+      console.error("[sendBookingPdfSaldata] upload PDF fallito per", pren.numero, e);
+      toast.error(`PDF/email 'saldata' non inviati per ${pren.numero}`);
+    }
+  };
+  const sendBookingPdfValidata = async (pren: PrenotazioneDto): Promise<void> => {
+    try {
+      const b64 = await buildBookingPdfBase64(pren);
+      await api.uploadPrenotazionePdfValidata(pren.id, b64);
+    } catch (e) {
+      console.error("[sendBookingPdfValidata] upload PDF fallito per", pren.numero, e);
+      toast.error(`PDF/email 'validata' non inviati per ${pren.numero}`);
+    }
+  };
+
+  const sendOptionPdfValidata = async (opt: OpzioneDto): Promise<void> => {
+    try {
+      const b64 = await buildOptionPdfBase64(opt);
+      await api.uploadOpzionePdfValidata(opt.id, b64);
+    } catch (e) {
+      console.error("[sendOptionPdfValidata] upload PDF fallito per", opt.numero, e);
+      toast.error(`PDF/email 'validata' non inviati per ${opt.numero}`);
+    }
+  };
+  /** Genera il PDF lato client come base64 (condiviso da creazione e saldata). */
+  const buildBookingPdfBase64 = async (pren: PrenotazioneDto): Promise<string> => {
+    const lang = languageFromUser(state?.user?.lingua);
+
+    console.log();
+    const imgs = await loadPdfImages();
+
+    const dateFmt = new Intl.DateTimeFormat(
+      lang === "en" ? "en-GB" : lang === "de" ? "de-DE" : "it-IT",
+      { day: "2-digit", month: "2-digit", year: "numeric" },
+    );
+    const formatDate = (iso: string | null | undefined) => {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? "—" : dateFmt.format(d);
+    };
+
+    const rows = pren.righe.map((r) => {
+      const race = state.races.find((x) => x.id === String(r.garaId));
+      const sector = state.sectors.find((x) => x.id === `${r.garaId}-${r.settoreId}`);
+      const price = sector?.prezzi?.find((p) => p.id === r.prezzoId);
+
+      const ticketType =
+        lang === "en"
+          ? (price?.tipologiaEN ?? price?.tipologia ?? "Full Price")
+          : lang === "de"
+            ? (price?.tipologiaDE ?? price?.tipologia ?? "Normalpreis")
+            : (price?.tipologia ?? "Intero");
+
+      return {
+        date: race?.date ? formatDate(race.date) : "—",
+        race: race ? nomeLocalizzato(race, lang) : `Gara #${r.garaId}`,
+        ticketType,
+        category: sector ? nomeLocalizzato(sector, lang) : r.settoreId,
+        qty: r.quantita,
+        unitPrice: r.prezzoUnitario,
+        total: r.totale,
+      };
+    });
+
+    const rowsSum = rows.reduce((s, r) => s + r.total, 0);
+    const totalQty = rows.reduce((s, r) => s + r.qty, 0);
+    const serviceFeeTotal =
+      pren.totaleCommissioni > 0
+        ? pren.totaleCommissioni
+        : (state.settings?.servizioPrezzo ?? 0) * totalQty;
+    const emailFeeTotal = state.settings?.emailPrezzo ?? 0;
+    const grandTotal = rowsSum + serviceFeeTotal + emailFeeTotal;
+
+    const paymentDueDays = pren.scadenzaPagamento
+      ? Math.max(
+          0,
+          Math.round(
+            (new Date(pren.scadenzaPagamento).getTime() - new Date(pren.creatoIl).getTime()) /
+              86_400_000,
+          ),
+        )
+      : 7;
+
+    return generatePdfBase64({
+      kind: "BOOKING",
+      lang,
+      date: pren.creatoIl,
+      number: pren.numero,
+      operator: pren.tourOperatorNome,
+      customer: { name: pren.cliente ?? pren.tourOperatorNome },
+      rows,
+      serviceFees: serviceFeeTotal,
+      emailFees: emailFeeTotal,
+      grandTotal,
+      paymentDueDays,
+      notes: pren.noteTo ?? undefined,
+      headerImage: imgs.header,
+      footerImage: imgs.footer,
+      user: state?.user ?? null,
+      settings: state.settings,
+      t,
+    });
+  };
+
+  const buildOptionPdfBase64 = async (opt: OpzioneDto): Promise<string> => {
+    const lang = languageFromUser(state?.user?.lingua);
+    const imgs = await loadPdfImages();
+
+    const dateFmt = new Intl.DateTimeFormat(
+      lang === "en" ? "en-GB" : lang === "de" ? "de-DE" : "it-IT",
+      { day: "2-digit", month: "2-digit", year: "numeric" },
+    );
+    const formatDate = (iso: string | null | undefined) => {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? "—" : dateFmt.format(d);
+    };
+
+    const rows = opt.righe.map((r) => {
+      const race = state.races.find((x) => x.id === String(r.garaId));
+      const sector = state.sectors.find((x) => x.id === `${r.garaId}-${r.settoreId}`);
+      const price = sector?.prezzi?.find((p) => p.id === r.prezzoId);
+
+      const ticketType =
+        lang === "en"
+          ? (price?.tipologiaEN ?? price?.tipologia ?? "Full Price")
+          : lang === "de"
+            ? (price?.tipologiaDE ?? price?.tipologia ?? "Normalpreis")
+            : (price?.tipologia ?? "Intero");
+
+      return {
+        date: race?.date ? formatDate(race.date) : "—",
+        race: race ? nomeLocalizzato(race, lang) : `Gara #${r.garaId}`,
+        ticketType,
+        category: sector ? nomeLocalizzato(sector, lang) : r.settoreId,
+        qty: r.quantita,
+        unitPrice: r.prezzoUnitario,
+        total: r.totale,
+      };
+    });
+
+    const rowsSum = rows.reduce((s, r) => s + r.total, 0);
+    const serviceFeeTotal = opt.totaleCommissioni ?? 0;
+    const emailFeeTotal = state.settings?.emailPrezzo ?? 0;
+    const grandTotal = rowsSum + serviceFeeTotal + emailFeeTotal;
+
+    return generatePdfBase64({
+      kind: "OPTION",
+      lang,
+      date: opt.creatoIl,
+      number: opt.numero,
+      operator: opt.tourOperatorNome,
+      customer: { name: opt.tourOperatorNome },
+      rows,
+      serviceFees: serviceFeeTotal,
+      emailFees: emailFeeTotal,
+      grandTotal,
+      expiresAt: opt.scadeIl, // obbligatorio per il blocco "scadenza opzione"
+      notes: opt.note ?? undefined,
+      headerImage: imgs.header,
+      footerImage: imgs.footer,
+      user: state?.user ?? null,
+      settings: state.settings,
+      t,
+    });
   };
 
   // ---- Conversione opzione → prenotazione ----
@@ -1226,8 +1383,7 @@ export function ToStoreProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     fetchAudits();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.user?.id, state?.selectedTOperator?.id, state?.user?.tourOperatorId]);
-
+  }, [state?.user?.id, state?.selectedToId, state?.user?.tourOperatorId]);
   React.useEffect(() => {
     try {
       const raw = window.localStorage.getItem("areato.session");

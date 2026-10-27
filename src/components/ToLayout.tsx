@@ -56,6 +56,12 @@ const AUDIT_NAV: NavItem = { to: "/audit", labelKey: "nav.audit", icon: ScrollTe
 const ADMIN_NAV: NavItem[] = [
   { to: "/admin/operators", labelKey: "nav.admin.operators", icon: Users },
   { to: "/admin/validations", labelKey: "nav.admin.validations", icon: BadgeCheck },
+  {
+    to: "/admin/validation/bookings",
+    labelKey: "nav.admin.validations.bookings",
+    icon: BadgeCheck,
+  },
+
   { to: "/admin/general", labelKey: "nav.admin.general", icon: BadgeCheck },
 
   // { to: "/admin/payments", labelKey: "nav.admin.payments", icon: Wallet },
@@ -345,7 +351,7 @@ function Topbar() {
         )} */}
 
         <LanguageSwitcher />
-        <NotificationsBell />
+        {/* <NotificationsBell /> */}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

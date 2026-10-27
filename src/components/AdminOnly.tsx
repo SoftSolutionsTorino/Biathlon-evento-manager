@@ -1,9 +1,3 @@
-/**
- * Guard di presentazione.
- * - AdminOnly: le pagine di amministrazione sono visibili solo al ruolo Admin.
- * - ReadOnlyNotice: banner mostrato all'Admin sulle pagine operative del TO,
- *   dove può consultare i dati ma non eseguire le azioni riservate al TO.
- */
 import { useToStore } from "@/lib/toStore";
 import { useI18n } from "@/lib/i18n";
 import { ShieldAlert, Eye } from "lucide-react";
@@ -33,3 +27,13 @@ export function ReadOnlyNotice() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+

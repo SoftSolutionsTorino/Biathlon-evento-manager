@@ -1,4 +1,3 @@
-
 import { createFileRoute } from "@tanstack/react-router";
 import { useToStore, downloadCsv } from "@/lib/toStore";
 import { useI18n, useFormatters } from "@/lib/i18n";
@@ -44,10 +43,10 @@ function AuditPage() {
           <h1 className="text-xl font-semibold sm:text-2xl">{t("audit.title")}</h1>
           <p className="text-sm text-muted-foreground">{t("audit.subtitle")}</p>
         </div>
-        <Button variant="outline" onClick={exportCsv}>
+        {/* <Button variant="outline" onClick={exportCsv}>
           <Download className="mr-2 h-4 w-4" />
           {t("common.export.csv")}
-        </Button>
+        </Button> */}
       </div>
 
       <Card>
@@ -58,7 +57,7 @@ function AuditPage() {
                 <TableHead>{t("audit.col.datetime")}</TableHead>
                 <TableHead>{t("audit.col.user")}</TableHead>
                 <TableHead>{t("audit.col.action")}</TableHead>
-                <TableHead>{t("audit.col.details")}</TableHead>
+                {/* <TableHead>{t("audit.col.details")}</TableHead> */}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -73,7 +72,7 @@ function AuditPage() {
                     </Badge>
                   </TableCell> */}
                   <TableCell className="text-sm font-medium">{a.action}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{a.details}</TableCell>
+                  {/* <TableCell className="text-xs text-muted-foreground">{a.details}</TableCell> */}
                 </TableRow>
               ))}
             </TableBody>

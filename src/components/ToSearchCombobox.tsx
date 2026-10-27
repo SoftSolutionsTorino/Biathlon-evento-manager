@@ -29,15 +29,15 @@ export function ToSearchCombobox() {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
 
-  // Cache the selected operator so the trigger keeps showing it even when
-  // it's not present in the currently-loaded list (pagination, search reset…).
+  // Cache locale: mantiene visibile il TO selezionato anche se non è nella
+  // lista caricata (paginazione, ricerca svuotata, arrivo da un'altra pagina…).
   const [selectedOperator, setSelectedOperator] = React.useState<TourOperator | null>(null);
 
-  // Stable ref so the debounce effect doesn't re-run on every render.
+  // Stable ref per non far ripartire il debounce ad ogni render.
   const searchRef = React.useRef(getTourOperatorsByName);
   searchRef.current = getTourOperatorsByName;
 
-  // Debounced server-side search
+  // Ricerca server-side debounced
   React.useEffect(() => {
     const q = query.trim();
     if (!q) return;
@@ -45,8 +45,11 @@ export function ToSearchCombobox() {
     return () => clearTimeout(handle);
   }, [query]);
 
-  // Keep the cached operator in sync when selectedToId changes
-  // (e.g. restored from localStorage, or set elsewhere).
+  // Sincronizza `selectedOperator` quando `selectedToId` cambia (dal
+  // combobox, dal log email, da localStorage…). Ordine di risoluzione:
+  //   1. liste già caricate (tourOperators / tourOperatorsByName)
+  //   2. selectedTOperator dallo store (fallback: set da EmailLogSection)
+  //   3. previous (nessun cambio)
   React.useEffect(() => {
     if (!selectedToId) {
       setSelectedOperator(null);
@@ -54,19 +57,32 @@ export function ToSearchCombobox() {
     }
     setSelectedOperator((prev) => {
       if (prev && prev.id === selectedToId) return prev;
-      return (
+
+      const fromList =
         tourOperators.find((o) => o.id === selectedToId) ??
-        tourOperatorsByName.find((o) => o.id === selectedToId) ??
-        prev
-      );
+        tourOperatorsByName.find((o) => o.id === selectedToId);
+      if (fromList) return fromList;
+
+      if (selectedTOperator && selectedTOperator.id === selectedToId) {
+        return selectedTOperator;
+      }
+
+      return prev;
     });
-  }, [selectedToId, tourOperators, tourOperatorsByName]);
+  }, [selectedToId, tourOperators, tourOperatorsByName, selectedTOperator]);
 
-  // If we're searching → results from the API; otherwise → full list
-  const list = query.trim() ? tourOperatorsByName : tourOperators;
+  // Lista visibile nel popover: ricerca server-side o lista completa.
+  const baseList = query.trim() ? tourOperatorsByName : tourOperators;
 
-  // Display `company` if available, otherwise fall back to `name`,
-  // otherwise the search placeholder.
+  // Assicura che il TO selezionato compaia nella lista (con la ✓), anche
+  // quando non è tra i primi risultati caricati.
+  const list = React.useMemo(() => {
+    if (!selectedToId || !selectedOperator) return baseList;
+    if (baseList.some((o) => o.id === selectedToId)) return baseList;
+    return [selectedOperator, ...baseList];
+  }, [baseList, selectedToId, selectedOperator]);
+
+  // Etichetta trigger: company → name → placeholder.
   const label = selectedOperator?.company || selectedOperator?.name || t("common.search");
 
   return (
@@ -77,13 +93,14 @@ export function ToSearchCombobox() {
           role="combobox"
           aria-expanded={open}
           className="h-8 w-full justify-between sm:w-[260px]"
+          title={label}
         >
           <span className="truncate">{label}</span>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
-        {/* shouldFilter={false} because filtering happens on the backend */}
+        {/* shouldFilter={false}: il filtro avviene sul backend */}
         <Command shouldFilter={false}>
           <CommandInput placeholder={t("common.search")} value={query} onValueChange={setQuery} />
           <CommandList>

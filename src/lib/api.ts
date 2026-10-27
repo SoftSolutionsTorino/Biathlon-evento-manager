@@ -264,6 +264,18 @@ export type ConversioneEsitoDto = {
   prenotazione: PrenotazioneDto;
   opzione: OpzioneDto;
 };
+export type EmailLogDto = {
+  id: number;
+  creatoIl: string;
+  azione: "PRENOTAZIONE_CREATA" | "OPZIONE_CREATA" | "OPZIONE_CONVERTITA" | string;
+  entita: "Prenotazione" | "Opzione" | string;
+  entitaId: number;
+  numero?: string | null;
+  tourOperatorId: number;
+  tourOperatorNome?: string | null;
+  subject?: string | null;
+  pdfAllegato: boolean;
+};
 
 export type TourOperatorDto = {
   id: number;
@@ -576,6 +588,13 @@ export const api = {
 
   uploadPrenotazionePdf: (id: number, base64: string) =>
     post<{ message: string }>(`/prenotazioni/${id}/pdf`, { base64 }),
+  uploadPrenotazionePdfSaldata: (id: number, base64: string) =>
+    post<{ message: string }>(`/prenotazioni/${id}/pdf-saldata`, { base64 }),
+  uploadPrenotazionePdfValidata: (id: number, base64: string) =>
+    post<{ message: string }>(`/prenotazioni/${id}/pdf-validata`, { base64 }),
+  uploadOpzionePdfValidata: (id: number, base64: string) =>
+    post<{ message: string }>(`/opzioni/${id}/pdf-validata`, { base64 }),
+  emailLog: (take = 100) => get<EmailLogDto[]>(`/admin/email-log?take=${take}`),
 };
 
 function clean(o: Record<string, unknown>): Record<string, string> {

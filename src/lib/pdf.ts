@@ -4,9 +4,7 @@ import type { TDocumentDefinitions, Content } from "pdfmake/interfaces";
 import headerImgUrl from "./pdf-header.png";
 import footerImgUrl from "./pdf-footer.png";
 import { UtenteDto, UtenteDta } from "./api";
-
-
-
+import { fmtDate } from "./toStore";
 
 const fonts: any = pdfFonts;
 const vfs: any = fonts.pdfMake?.vfs ?? fonts.vfs;
@@ -54,7 +52,7 @@ export type PdfInput = {
   footerImage?: string;
   user: UtenteDto | null;
   settings?: UtenteDta | null;
-  t: (key: string, params?: Record<string, any>) => string; // <-- AGGIUNTO
+  t: (key: string, params?: Record<string, any>) => string; 
 };
 
 export function languageFromUser(lingua: string | number | undefined | null): PdfLang {
@@ -314,7 +312,7 @@ function buildDocDefinition(input: PdfInput): TDocumentDefinitions {
   /* expiry block */
   if (!isBooking && input.expiresAt) {
     content.push({
-      text: t("pdf.option.expiry", { d: input.settings?.scadenzaOpzioni || input.expiresAt }),
+      text: t("pdf.option.expiry", { d: fmtDate(input.expiresAt) }),
       margin: [0, 16, 0, 8],
     });
     content.push({ text: t("pdf.option.expiryNote"), margin: [0, 0, 0, 16] });
